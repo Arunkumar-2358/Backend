@@ -1,0 +1,1001 @@
+// Nextenti Recruit CRM — data model (PLAN.md §4)
+// Contact details (mobile, alt mobile, email) are encrypted at rest (AES-256-GCM).
+// Blind-index hashes (HMAC-SHA256) back uniqueness and dedupe lookups.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma-free model types shipped to API consumers (see contracts/README.md)
+generator contracts {
+  provider     = "prisma-generator-typescript-interfaces"
+  output       = "../contracts/models.ts"
+  enumType     = "stringUnion"
+  dateType     = "Date"
+  jsonType     = "unknown"
+  headerComment = "Generated from prisma/schema.prisma by `npm run db:generate`. Do not edit."
+  relations     = "none"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Enums ───────────────────────────────
+
+enum Role {
+  admin
+  data_analyst
+  ta_lead
+  team1_leader
+  telecaller
+  sourcer
+  team2_leader
+  recruiter
+  team3_leader
+  ta_coordinator
+}
+
+enum TeamCode {
+  T1A
+  T1B
+  T2
+  T3A
+  T3B
+  T3C
+  T4
+}
+
+enum Stage {
+  MAPPING
+  VALIDATED
+  ENROLLED
+  QUALIFIED
+  ACTIVE
+  SOURCED
+  SELECTED
+  JOINED
+  SUCCESSFUL
+  NOT_INTERESTED
+  UNREACHABLE
+  DUPLICATE
+  INVALID
+  DROPPED
+}
+
+enum DropReason {
+  INTERVIEW_NO_SHOW
+  REJECTED
+  OFFER_DECLINED
+  LEFT_BEFORE_30_DAYS
+  NOT_JOINED
+  OTHER
+}
+
+enum MainCategory {
+  DOCTOR
+  NURSE
+  PHARMACY
+  ALLIED
+  ADMIN
+  OTHER
+}
+
+enum LeadSource {
+  CONVENTIONAL_MARKETING
+  NT
+  NAUKRI
+  LINKEDIN
+  INDEED
+  REFERRAL
+  DIGITAL_MARKETING
+  OTHER_PORTAL // any other outside job portal (non-NT)
+  OTHER
+}
+
+enum EmploymentPreference {
+  FULL_TIME
+  PART_TIME
+  LOCUM
+  CONTRACT
+}
+
+enum AvailabilityStatus {
+  IMMEDIATE
+  SERVING_NOTICE
+  NOT_LOOKING
+  UNKNOWN
+}
+
+enum ShiftPreference {
+  DAY
+  NIGHT
+  ROTATIONAL
+  ANY
+}
+
+enum DuplicateCheckStatus {
+  PENDING
+  UNIQUE
+  DUPLICATE
+}
+
+enum VerificationStatus {
+  INCOMPLETE
+  COMPLETE_VERIFIED
+}
+
+enum Channel {
+  CALL
+  WHATSAPP
+  SMS
+  EMAIL
+  NT_PLATFORM // registration event from the NT platform webhook
+}
+
+enum ContactDirection {
+  OUTBOUND
+  INBOUND_MISSED
+  RECALL
+}
+
+enum ContactOutcome {
+  UNANSWERED
+  NOT_INTERESTED
+  INTERESTED_LINK_SENT_NOT_REGISTERED // "Bb"
+  BUSY_RECALL_REQUESTED // "Bc"
+  ANSWERED // answered, conversation in progress (used by missed-call funnel)
+  ENROLLED
+}
+
+enum TaskType {
+  FOLLOW_UP
+  RECALL
+  COLLECT_DETAILS
+  AVAILABILITY_CHECK
+  INTERVIEW_REMINDER
+  OFFER_FOLLOW_UP
+  RETENTION_CHECK
+  GENERAL
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+  CANCELLED
+}
+
+enum JobStatus {
+  PENDING
+  DONE
+  FAILED
+  CANCELLED
+}
+
+enum ClientOrgType {
+  GENERAL
+  EXISTING
+  FREE_TRIAL
+}
+
+enum VacancyStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum SubmissionDecision {
+  PENDING
+  SHORTLISTED
+  REJECTED
+}
+
+enum InterviewMode {
+  IN_PERSON
+  VIDEO
+  PHONE
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  ATTENDED
+  NO_SHOW
+  CANCELLED
+}
+
+enum InterviewResult {
+  PENDING
+  SELECTED
+  REJECTED
+}
+
+enum RedFlagStatus {
+  OPEN
+  CAPA_SUGGESTED
+  IMPLEMENTED
+  CLOSED
+}
+
+enum PeriodType {
+  WEEK
+  MONTH
+}
+
+enum ImportBatchStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ImportRowStatus {
+  ACCEPTED
+  NEEDS_MAPPING
+  DUPLICATE_IN_FILE
+  DUPLICATE_IN_DB
+  INVALID_MOBILE
+  ERROR
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum DeletionRequestStatus {
+  REQUESTED
+  COMPLETED
+  REJECTED
+}
+
+// ─────────────────────────── People & teams ───────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  active       Boolean   @default(true)
+  phone        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+  /// UI theme preference: "light" | "dark" | "system" (follow the device)
+  theme        String    @default("system")
+
+  roles             UserTeamRole[]
+  ownedLeads        Candidate[]       @relation("LeadOwner")
+  verifiedLeads     Candidate[]       @relation("LeadVerifier")
+  tasks             Task[]            @relation("TaskAssignee")
+  contactAttempts   ContactAttempt[]
+  stageChanges      LeadStageHistory[]
+  submissions       Submission[]
+  redFlagsAsAgent   RedFlag[]         @relation("RedFlagAgent")
+  redFlagsAsOwner   RedFlag[]         @relation("RedFlagActionOwner")
+  redFlagsRaised    RedFlag[]         @relation("RedFlagRaisedBy")
+  attendance        Attendance[]
+  assignmentRules   AssignmentRule[]
+  importBatches     ImportBatch[]
+  vacanciesAssigned Vacancy[]         @relation("VacancyRecruiter")
+  vacanciesSourcing Vacancy[]         @relation("VacancySourcer")
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+
+  @@map("users")
+}
+
+model Team {
+  id    String         @id @default(cuid())
+  code  TeamCode       @unique
+  name  String
+  roles UserTeamRole[]
+
+  @@map("teams")
+}
+
+model UserTeamRole {
+  id     String @id @default(cuid())
+  userId String
+  teamId String
+  role   Role
+  // Specialisation inside the team (e.g. NURSE for Jennifer). Null = all.
+  category MainCategory?
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, teamId, role])
+  @@map("user_team_roles")
+}
+
+/// Configurable routing: which user receives a lead of a category when it enters a team.
+model AssignmentRule {
+  id        String        @id @default(cuid())
+  teamCode  TeamCode
+  category  MainCategory?
+  userId    String
+  priority  Int           @default(0)
+  active    Boolean       @default(true)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([teamCode, category])
+  @@map("assignment_rules")
+}
+
+// ─────────────────────────── Candidate / Lead ───────────────────────────
+
+model Candidate {
+  id            String @id @default(cuid())
+  candidateCode String @unique
+
+  // Identity (encrypted)
+  name          String
+  mobileEnc     String
+  mobileHash    String  @unique
+  mobileLast4   String
+  altMobileEnc  String?
+  emailEnc      String?
+  emailHash     String?
+
+  // Qualification
+  basicQualification       String?
+  additionalQualifications String[]
+  registrationNumber       String?
+  registrationAuthority    String?
+  registrationYear         Int?
+
+  // Profile
+  mainCategory             MainCategory?
+  professionFunctionalHead String?
+  jobTitle                 String?
+  primarySpecialty         String?
+  secondarySkills          String[]
+  experienceYears          Float?
+  currentOrg               String?
+  currentDesignation       String?
+  currentLocation          String?
+  preferredLocations       String[] // ordered by priority
+
+  // Commercials
+  currentCtcLakhs          Float?
+  expectedCtcLakhs         Float?
+  noticePeriodDays         Int?
+  earliestAvailabilityDate DateTime?
+  availabilityStatus       AvailabilityStatus    @default(UNKNOWN)
+  shiftPreference          ShiftPreference?
+  employmentPreference     EmploymentPreference?
+
+  // Source
+  source     LeadSource @default(OTHER)
+  isNtSource Boolean    @default(true)
+
+  // Files (object-storage keys)
+  resumeFileKey  String?
+  resumeFileName String?
+  introVideoKey  String?
+
+  // Compliance (DPDP)
+  consentRecordStoreShare   Boolean   @default(false)
+  consentAt                 DateTime?
+  anonymizedAt              DateTime?
+
+  // Ops
+  ownerUserId            String?
+  stage                  Stage                @default(MAPPING)
+  stageChangedAt         DateTime             @default(now())
+  isCold                 Boolean              @default(false)
+  coldSince              DateTime?
+  dropReason             DropReason?
+  duplicateCheckStatus   DuplicateCheckStatus @default(PENDING)
+  profileCompletenessPct Int                  @default(0)
+  tlRemarks              String?
+  verificationStatus     VerificationStatus   @default(INCOMPLETE)
+  verifiedById           String?
+  verifiedAt             DateTime?
+  contactAttemptCount    Int                  @default(0)
+  nextFollowupAt         DateTime?
+  importBatchId          String?
+  enrolledAt             DateTime?
+  scrutinizedAt          DateTime?
+  scrutinizedById        String?
+  createdById            String?
+  createdAt              DateTime             @default(now())
+  lastUpdated            DateTime             @updatedAt
+
+  owner           User?              @relation("LeadOwner", fields: [ownerUserId], references: [id])
+  verifiedBy      User?              @relation("LeadVerifier", fields: [verifiedById], references: [id])
+  importBatch     ImportBatch?       @relation(fields: [importBatchId], references: [id])
+  stageHistory    LeadStageHistory[]
+  contactAttempts ContactAttempt[]
+  tasks           Task[]
+  submissions     Submission[]
+  evalScores      EvalScore[]
+  evaluationSlots EvaluationCandidate[]
+  messages        Message[]
+  availabilityChecks AvailabilityCheck[]
+  deletionRequests DataDeletionRequest[]
+
+  @@index([stage])
+  @@index([ownerUserId])
+  @@index([mainCategory])
+  @@index([emailHash])
+  @@index([stage, ownerUserId])
+  @@index([stage, mainCategory])
+  @@index([nextFollowupAt])
+  @@index([mobileLast4])
+  @@index([createdAt])
+  @@map("candidates")
+}
+
+model LeadStageHistory {
+  id          String   @id @default(cuid())
+  candidateId String
+  fromStage   Stage?
+  toStage     Stage
+  byUserId    String?
+  bySystem    String? // e.g. "scheduler", "nt-webhook", "import"
+  // Ownership snapshot — lets KPIs credit the agent who owned the lead at the time
+  prevOwnerUserId String?
+  ownerUserId     String?
+  at          DateTime @default(now())
+  note        String?
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  byUser    User?     @relation(fields: [byUserId], references: [id])
+
+  @@index([candidateId, at])
+  @@index([toStage, at])
+  @@map("lead_stage_history")
+}
+
+model ContactAttempt {
+  id             String           @id @default(cuid())
+  candidateId    String
+  channel        Channel
+  direction      ContactDirection @default(OUTBOUND)
+  outcome        ContactOutcome
+  isFirstTimeVerifiedCall Boolean @default(false)
+  linkSent       Boolean          @default(false)
+  notes          String?
+  nextFollowupAt DateTime?
+  byUserId       String?
+  at             DateTime         @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  byUser    User?     @relation(fields: [byUserId], references: [id])
+
+  @@index([candidateId, at])
+  @@index([byUserId, at])
+  @@map("contact_attempts")
+}
+
+/// Team 1b missed-call inbox. A missed incoming call may or may not match a known lead.
+model MissedCall {
+  id             String    @id @default(cuid())
+  fromMobileEnc  String
+  fromMobileHash String
+  fromLast4      String
+  receivedAt     DateTime  @default(now())
+  candidateId    String?
+  assignedToId   String?
+  recallAttemptedAt DateTime?
+  answered       Boolean   @default(false)
+  linkSent       Boolean   @default(false)
+  enrolled       Boolean   @default(false)
+  closedAt       DateTime?
+  notes          String?
+
+  @@index([receivedAt])
+  @@index([assignedToId])
+  @@map("missed_calls")
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  type        TaskType
+  title       String
+  candidateId String?
+  refType     String? // e.g. "interview", "offer", "joining", "vacancy"
+  refId       String?
+  assigneeId  String?
+  dueAt       DateTime
+  status      TaskStatus @default(OPEN)
+  result      String?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+  createdBy   String? // user id or "system"
+
+  candidate Candidate? @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  assignee  User?      @relation("TaskAssignee", fields: [assigneeId], references: [id])
+
+  @@index([assigneeId, status, dueAt])
+  @@index([candidateId, status])
+  @@map("tasks")
+}
+
+/// Durable scheduled jobs (reminders, check-ins). Run by scripts/worker.ts → runDueJobs().
+model ScheduledJob {
+  id        String    @id @default(cuid())
+  type      String
+  runAt     DateTime
+  payload   Json
+  status    JobStatus @default(PENDING)
+  attempts  Int       @default(0)
+  lastError String?
+  dedupeKey String?   @unique
+  createdAt DateTime  @default(now())
+  doneAt    DateTime?
+
+  @@index([status, runAt])
+  @@map("scheduled_jobs")
+}
+
+model AvailabilityCheck {
+  id          String    @id @default(cuid())
+  candidateId String
+  checkedAt   DateTime  @default(now())
+  available   Boolean
+  wasCold     Boolean   @default(false)
+  byUserId    String?
+  notes       String?
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, checkedAt])
+  @@map("availability_checks")
+}
+
+// ─────────────────────────── Import ───────────────────────────
+
+model ImportBatch {
+  id              String            @id @default(cuid())
+  fileName        String
+  fileKey         String?
+  mappingName     String?
+  status          ImportBatchStatus @default(PROCESSING)
+  totalRows       Int               @default(0)
+  duplicateRows   Int               @default(0)
+  invalidRows     Int               @default(0)
+  acceptedRows    Int               @default(0)
+  needsMappingRows Int              @default(0)
+  source          LeadSource        @default(OTHER)
+  uploadedById    String?
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
+
+  uploadedBy User?       @relation(fields: [uploadedById], references: [id])
+  rows       ImportRow[]
+  candidates Candidate[]
+
+  @@map("import_batches")
+}
+
+model ImportRow {
+  id              String          @id @default(cuid())
+  batchId         String
+  rowNumber       Int
+  raw             Json
+  status          ImportRowStatus
+  rejectionReason String?
+  candidateId     String?
+
+  batch ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, status])
+  @@map("import_rows")
+}
+
+model ImportMapping {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  mapping   Json // { "<source column header>": "<candidate field>" }
+  isPreset  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("import_mappings")
+}
+
+// ─────────────────────────── Clients & vacancies ───────────────────────────
+
+model ClientOrg {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  type      ClientOrgType @default(GENERAL)
+  city      String?
+  createdAt DateTime      @default(now())
+  vacancies Vacancy[]
+
+  @@map("client_orgs")
+}
+
+model Vacancy {
+  id                  String        @id @default(cuid())
+  code                String        @unique
+  clientOrgId         String
+  title               String
+  category            MainCategory
+  specialty           String?
+  location            String
+  minExperienceYears  Float?
+  ctcMinLakhs         Float?
+  ctcMaxLakhs         Float?
+  maxNoticeDays       Int?
+  openings            Int           @default(1)
+  openingsFilled      Int           @default(0)
+  postedAt            DateTime      @default(now())
+  calibratedAt        DateTime?
+  status              VacancyStatus @default(OPEN)
+  addedBefore2pm      Boolean       @default(false)
+  routedTeam          TeamCode
+  recruiterId         String?
+  sourcerId           String? // Team 2 sourcer responsible for CV matching
+  wasPending          Boolean       @default(false)
+  sourcingCompletedAt DateTime? // when the 5th CV was submitted
+  closedAt            DateTime?
+  createdAt           DateTime      @default(now())
+
+  clientOrg   ClientOrg    @relation(fields: [clientOrgId], references: [id])
+  recruiter   User?        @relation("VacancyRecruiter", fields: [recruiterId], references: [id])
+  sourcer     User?        @relation("VacancySourcer", fields: [sourcerId], references: [id])
+  submissions Submission[]
+  evaluations Evaluation[]
+
+  @@index([status, category])
+  @@index([routedTeam, status])
+  @@index([recruiterId])
+  @@index([sourcerId])
+  @@map("vacancies")
+}
+
+model Submission {
+  id            String             @id @default(cuid())
+  vacancyId     String
+  candidateId   String
+  isNtSource    Boolean
+  submittedById String?
+  submittedAt   DateTime           @default(now())
+  matchScore    Float?
+  decision      SubmissionDecision @default(PENDING)
+  decidedAt     DateTime?
+
+  vacancy     Vacancy     @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
+  candidate   Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  submittedBy User?       @relation(fields: [submittedById], references: [id])
+  interviews  Interview[]
+  offers      Offer[]
+
+  @@unique([vacancyId, candidateId])
+  @@index([submittedAt])
+  @@map("submissions")
+}
+
+model Interview {
+  id            String          @id @default(cuid())
+  submissionId  String
+  scheduledAt   DateTime
+  mode          InterviewMode   @default(IN_PERSON)
+  communicatedAt DateTime?
+  status        InterviewStatus @default(SCHEDULED)
+  result        InterviewResult @default(PENDING)
+  remindersSent Int             @default(0)
+  attended      Boolean         @default(false)
+  notes         String?
+  createdAt     DateTime        @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt])
+  @@map("interviews")
+}
+
+model Offer {
+  id           String    @id @default(cuid())
+  submissionId String
+  sentAt       DateTime  @default(now())
+  acceptedAt   DateTime?
+  declinedAt   DateTime?
+  joiningDate  DateTime?
+  ctcLakhs     Float?
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  joining    Joining?
+
+  @@map("offers")
+}
+
+model Joining {
+  id            String      @id @default(cuid())
+  offerId       String      @unique
+  joinedAt      DateTime
+  formalitiesCompletedAt DateTime?
+  retained7dAt  DateTime?
+  retained30dAt DateTime?
+  leftAt        DateTime?
+  reason        String?
+
+  offer Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@map("joinings")
+}
+
+// ─────────────────────────── Evaluation scorecard ───────────────────────────
+
+model EvalTemplate {
+  id          String          @id @default(cuid())
+  name        String          @unique
+  description String?
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  criteria    EvalCriterion[]
+  evaluations Evaluation[]
+
+  @@map("eval_templates")
+}
+
+/// A criterion with sub-criteria: parent has children; weights live on leaf rows.
+model EvalCriterion {
+  id         String          @id @default(cuid())
+  templateId String
+  parentId   String?
+  name       String
+  weightPct  Float           @default(0)
+  sortOrder  Int             @default(0)
+
+  template EvalTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  parent   EvalCriterion?  @relation("CriterionTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children EvalCriterion[] @relation("CriterionTree")
+  scores   EvalScore[]
+
+  @@map("eval_criteria")
+}
+
+model Evaluation {
+  id          String   @id @default(cuid())
+  title       String
+  vacancyId   String?
+  interviewId String?
+  templateId  String
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  vacancy    Vacancy?              @relation(fields: [vacancyId], references: [id])
+  template   EvalTemplate          @relation(fields: [templateId], references: [id])
+  candidates EvaluationCandidate[]
+  scores     EvalScore[]
+
+  @@map("evaluations")
+}
+
+model EvaluationCandidate {
+  id           String   @id @default(cuid())
+  evaluationId String
+  candidateId  String
+  slot         Int // 1..3 ("alternatives")
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, slot])
+  @@unique([evaluationId, candidateId])
+  @@map("evaluation_candidates")
+}
+
+model EvalScore {
+  id           String @id @default(cuid())
+  evaluationId String
+  criterionId  String
+  candidateId  String
+  score        Int // 1..5
+  net          Float // weightPct/100 × score
+
+  evaluation Evaluation    @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  criterion  EvalCriterion @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  candidate  Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, criterionId, candidateId])
+  @@map("eval_scores")
+}
+
+// ─────────────────────────── Red flags / CAPA ───────────────────────────
+
+model RedFlag {
+  id                  String        @id @default(cuid())
+  date                DateTime      @default(now())
+  teamCode            TeamCode
+  description         String
+  agentId             String?
+  kpiKey              String?
+  kpiDeviated         String?
+  targetStandard      String?
+  actual              String?
+  raisedOn            DateTime      @default(now())
+  raisedById          String?
+  autoRaised          Boolean       @default(false)
+  periodType          PeriodType?
+  periodStart         DateTime?
+  capaSuggested       String?
+  capaSuggestedAt     DateTime?
+  expectedOutcome     String?
+  dueDate             DateTime?
+  completionDate      DateTime?
+  actionOwnerId       String?
+  correctiveActionImplemented String?
+  implementedAt       DateTime?
+  achievedOutcome     String?
+  status              RedFlagStatus @default(OPEN)
+  closedAt            DateTime?
+  closedWithin1WorkingDay Boolean?
+  dedupeKey           String?       @unique
+
+  agent       User? @relation("RedFlagAgent", fields: [agentId], references: [id])
+  actionOwner User? @relation("RedFlagActionOwner", fields: [actionOwnerId], references: [id])
+  raisedBy    User? @relation("RedFlagRaisedBy", fields: [raisedById], references: [id])
+
+  @@index([teamCode, status])
+  @@index([raisedOn])
+  @@map("red_flags")
+}
+
+model Holiday {
+  id   String   @id @default(cuid())
+  date DateTime @unique @db.Date
+  name String
+
+  @@map("holidays")
+}
+
+// ─────────────────────────── KPIs ───────────────────────────
+
+model KpiTarget {
+  id         String   @id @default(cuid())
+  metricKey  String
+  teamCode   TeamCode
+  periodType PeriodType
+  target     Float
+  // "gte" = actual must be >= target; "lte" = actual must be <= target
+  comparator String   @default("gte")
+
+  @@unique([metricKey, teamCode, periodType])
+  @@map("kpi_targets")
+}
+
+model KpiSnapshot {
+  id          String     @id @default(cuid())
+  teamCode    TeamCode
+  userId      String? // null = team total
+  periodType  PeriodType
+  periodStart DateTime
+  metricKey   String
+  value       Float
+  frozenAt    DateTime   @default(now())
+
+  @@unique([teamCode, userId, periodType, periodStart, metricKey])
+  @@index([periodType, periodStart])
+  @@map("kpi_snapshots")
+}
+
+/// "Working days" is the only manual KPI input (from attendance).
+model Attendance {
+  id      String   @id @default(cuid())
+  userId  String
+  date    DateTime @db.Date
+  present Boolean  @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@map("attendance")
+}
+
+// ─────────────────────────── Messaging, config, audit ───────────────────────────
+
+model MessageTemplate {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  channel   Channel
+  subject   String?
+  body      String // supports {{name}}, {{link}}, {{interviewAt}}, ...
+  active    Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@map("message_templates")
+}
+
+model Message {
+  id          String        @id @default(cuid())
+  candidateId String?
+  channel     Channel
+  toAddress   String // masked
+  templateKey String?
+  subject     String?
+  body        String
+  provider    String
+  providerRef String?
+  status      MessageStatus @default(QUEUED)
+  error       String?
+  sentById    String?
+  createdAt   DateTime      @default(now())
+
+  candidate Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+
+  @@index([candidateId, createdAt])
+  @@map("messages")
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  at         DateTime @default(now())
+  actorId    String?
+  actorLabel String? // "system:scheduler", "webhook:nt", ...
+  action     String // e.g. STAGE_CHANGE, FIELD_EDIT, REASSIGN, VIEW_PII, REMINDER_SENT
+  entityType String
+  entityId   String
+  diff       Json?
+  ip         String?
+
+  @@index([entityType, entityId, at])
+  @@index([actorId, at])
+  @@index([action, at])
+  @@map("audit_log")
+}
+
+model DataDeletionRequest {
+  id          String                @id @default(cuid())
+  candidateId String
+  requestedAt DateTime              @default(now())
+  requestedVia String?
+  reason      String?
+  status      DeletionRequestStatus @default(REQUESTED)
+  processedAt DateTime?
+  processedById String?
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("data_deletion_requests")
+}
+
+// ─────────────────────────── Notifications ───────────────────────────
+
+/// In-app notifications (bell). Created by domain events: assignments, tasks, red flags, CAPA, imports, interviews.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String // TASK, LEAD_ASSIGNED, RED_FLAG, CAPA, IMPORT, INTERVIEW, SYSTEM
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+/// Web Push subscription (PWA install). One row per browser/device the user enabled notifications on.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}

@@ -1,0 +1,11 @@
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgresql://arunkumarremella@localhost:5432/recruit_crm_test?schema=public";
+process.env.PII_ENCRYPTION_KEY ??= "3f1c9a7e5b2d4f6081a3c5e7f9b1d3a5c7e9f1b3d5a7c9e1f3b5d7a9c1e3f5a7";
+process.env.SESSION_SECRET ??= "test-secret-test-secret-test-secret-00";
+process.env.NT_WEBHOOK_SECRET ??= "test-webhook-secret";
+(process.env as Record<string, string>).NODE_ENV = "test";
+process.env.VAPID_PUBLIC_KEY ??= "BPOstDPdzg2oLswVpZzlAVdfj_meKjSLqQqbVPWN0HFirt6SXD5gTXoCW8RUz873G9lj6QSJmayMSh6iDpWNH-w";
+process.env.VAPID_PRIVATE_KEY ??= "TXAxcRTfY7Pc_cKpqDo_R5ZxDck9dJXyqmwNykuukkY";
+process.env.VAPID_SUBJECT ??= "mailto:test@example.com";
+process.env.TELEPHONY_WEBHOOK_TOKEN ??= "test-telephony-token";
+process.env.CRON_SECRET ??= "test-cron-secret";
+process.env.UPLOAD_DIR ??= "./storage/test";
