@@ -1,4 +1,4 @@
-# ADR 0001 — Split the monolith into `recruit-crm-web` and `recruit-crm-api`
+# ADR 0001 — Split the monolith into `Frontend` (web) and `Backend` (API)
 
 - **Status:** Accepted
 - **Date:** 2026-09-25
@@ -15,7 +15,7 @@ Recruit CRM started as one Next.js 15 App Router application. Pages were async s
 
 Two repositories with a typed HTTP contract between them.
 
-| | `recruit-crm-api` | `recruit-crm-web` |
+| | `Backend` | `Frontend` |
 |---|---|---|
 | Runtime | Node 22, Fastify 5 | Node 22, Next.js 15 (standalone) |
 | Owns | PostgreSQL (Prisma), domain services, RBAC enforcement, PII encryption + audit, jobs worker, webhooks, file storage, exports | UI, routing, session cookie, server actions as thin command adapters |

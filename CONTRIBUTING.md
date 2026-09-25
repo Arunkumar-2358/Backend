@@ -11,7 +11,7 @@ Endpoints are declared in `contracts/routes/<domain>.ts` and implemented with `r
 
 1. Edit the contract and the handler — TypeScript will tell you if they disagree.
 2. `npm run openapi` and commit `openapi.json`.
-3. In `recruit-crm-web`: `npm run contracts:sync`, update callers, open a paired PR.
+3. In the Frontend repo: `npm run contracts:sync`, update callers, open a paired PR.
 4. Prefer additive changes; removing or renaming a field requires the web PR to merge first.
 
 ## Conventions

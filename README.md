@@ -2,10 +2,10 @@
 
 Backend service for **Nextenti Recruit CRM**: the 9-stage healthcare recruitment life cycle (raw data dump → 30 days retained in the job), CV register and talent pool, outreach, sourcing, interviews and joining, scorecards, red flags / CAPA and weekly / monthly KPIs.
 
-It is consumed by [`recruit-crm-web`](../recruit-crm-web) (the Next.js UI) and by machine integrations (NT platform, telephony, schedulers). Product spec: [docs/PLAN.md](docs/PLAN.md). Why the system is split this way: [docs/adr/0001-split-web-and-api.md](docs/adr/0001-split-web-and-api.md).
+It is consumed by [`Frontend`](../Frontend) (the Next.js UI) and by machine integrations (NT platform, telephony, schedulers). Product spec: [docs/PLAN.md](docs/PLAN.md). Why the system is split this way: [docs/adr/0001-split-web-and-api.md](docs/adr/0001-split-web-and-api.md).
 
 ```
- Browser ──► recruit-crm-web (Next.js) ──Bearer JWT──► recruit-crm-api (Fastify) ──► PostgreSQL
+ Browser ──► Frontend (Next.js) ──Bearer JWT──► Backend (Fastify) ──► PostgreSQL
                     │  /api/v1/* proxied                    ▲          │
                     └───────────────────────────────────────┘          └──► storage (resumes, videos)
       NT platform / Exotel / cron ──────────────────────────► /v1/webhooks · /v1/telephony · /v1/cron

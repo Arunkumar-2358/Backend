@@ -1,6 +1,6 @@
 # contracts
 
-The API's public surface, consumed by `recruit-crm-web` (and any future client).
+The API's public surface, consumed by the Frontend repo (and any future client).
 
 | Path | What it is |
 | --- | --- |
@@ -15,4 +15,4 @@ The API's public surface, consumed by `recruit-crm-web` (and any future client).
 - **No dependencies.** Files here may only import each other by relative path. ESLint enforces this.
 - **The API is checked against it.** Every JSON endpoint is registered through `route(app, "METHOD /path", …)` in `src/http/route.ts`, which type-checks the handler's input schemas and return value against `ApiRoutes`.
 - **Dates are `Date` in the types and ISO-8601 strings on the wire.** The web client revives them.
-- **Changing a contract is an API change.** Bump the web copy with `npm run contracts:sync` in `recruit-crm-web` in the same change set.
+- **Changing a contract is an API change.** Bump the web copy with `npm run contracts:sync` in the Frontend repo in the same change set.
