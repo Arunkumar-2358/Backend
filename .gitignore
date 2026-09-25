@@ -1,7 +1,7 @@
 node_modules
 dist
 .env
-storage
+/storage
 coverage
 *.tsbuildinfo
 .DS_Store
