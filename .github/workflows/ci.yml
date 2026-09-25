@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: recruit_crm_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/recruit_crm_test?schema=public
+      TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/recruit_crm_test?schema=public
+      SESSION_SECRET: ci-session-secret-ci-session-secret-00
+      PII_ENCRYPTION_KEY: 3f1c9a7e5b2d4f6081a3c5e7f9b1d3a5c7e9f1b3d5a7c9e1f3b5d7a9c1e3f5a7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Generated contract models are committed
+        run: git diff --exit-code -- contracts/models.ts
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run openapi:check
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: recruit-crm-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

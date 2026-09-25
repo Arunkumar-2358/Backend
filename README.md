@@ -1,0 +1,103 @@
+# Recruit CRM — API
+
+Backend service for **Nextenti Recruit CRM**: the 9-stage healthcare recruitment life cycle (raw data dump → 30 days retained in the job), CV register and talent pool, outreach, sourcing, interviews and joining, scorecards, red flags / CAPA and weekly / monthly KPIs.
+
+It is consumed by [`recruit-crm-web`](../recruit-crm-web) (the Next.js UI) and by machine integrations (NT platform, telephony, schedulers). Product spec: [docs/PLAN.md](docs/PLAN.md). Why the system is split this way: [docs/adr/0001-split-web-and-api.md](docs/adr/0001-split-web-and-api.md).
+
+```
+ Browser ──► recruit-crm-web (Next.js) ──Bearer JWT──► recruit-crm-api (Fastify) ──► PostgreSQL
+                    │  /api/v1/* proxied                    ▲          │
+                    └───────────────────────────────────────┘          └──► storage (resumes, videos)
+      NT platform / Exotel / cron ──────────────────────────► /v1/webhooks · /v1/telephony · /v1/cron
+                                                      worker (same image) ──► scheduled_jobs
+```
+
+## Stack
+
+Node 22 · TypeScript · Fastify 5 · Prisma 6 / PostgreSQL 16 · zod · Vitest · tsup · Docker
+
+## Quick start
+
+```bash
+npm install
+cp .env.example .env               # set DATABASE_URL, SESSION_SECRET, PII_ENCRYPTION_KEY
+docker compose up -d db            # or use a local Postgres
+npm run db:deploy                  # apply migrations
+npm run db:seed                    # teams, users, rules, templates, demo data (SEED_DEMO=0 skips demo data)
+npm run dev                        # http://localhost:4000  ·  API docs at http://localhost:4000/docs
+npm run dev:worker                 # second terminal: reminders, check-ins, retention checks, KPI freezing
+```
+
+Full backend stack in containers: `docker compose up --build` (db → migrate → api + worker).
+
+**Dev logins** (seeded): `<firstname>@nextenti.ai` / `Nextenti@123` — e.g. `admin`, `greeshma` (data analyst), `sumitha` (TA coordinator), `sarala` (Team 1 leader), `jennifer` (TA lead), `bhavani` (tele-caller), `dixha` (Team 2 leader), `srividya` (sourcer), `sanjay` (Team 3 leader), `harsha` (recruiter).
+
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` / `dev:worker` | API / worker with reload (reads `.env`) |
+| `npm run build` → `start` / `start:worker` | Production bundle in `dist/` |
+| `npm test` | Vitest against a real Postgres test DB (service + HTTP tests) |
+| `npm run lint` · `typecheck` | ESLint · `tsc --noEmit` |
+| `npm run openapi` · `openapi:check` | Regenerate / verify `openapi.json` |
+| `npm run db:migrate` · `db:deploy` · `db:seed` · `db:reset` | Prisma migrations and seed |
+| `npm run migrate:zoho -- export.csv [--dry-run]` | Zoho import through the validation pipeline (safe to re-run) |
+| `scripts/backup.sh` | `pg_dump`, keeps 14 days |
+
+## Project layout
+
+```
+contracts/              public API surface, copied into the web app (see contracts/README.md)
+  models.ts             generated from prisma/schema.prisma — do not edit
+  routes/<domain>.ts    endpoint map: "METHOD /v1/path/{param}" → { params, query, body, response }
+  shared/               dependency-free domain helpers used by both sides (RBAC predicates, stage graph, fields, dates…)
+src/
+  app.ts                buildApp(): plugins + modules (tests use app.inject)
+  server.ts · worker.ts process entry points
+  config/env.ts         zod-validated environment — the process refuses to start on bad config
+  http/route.ts         typed route registration checked against contracts
+  plugins/              auth (bearer/cookie → actor), error envelope, OpenAPI docs
+  lib/                  db, clock (injectable), PII crypto, audit, settings, RBAC lead scope
+  kpi/                  metric registry, engine, snapshots + auto red flags, Excel export
+  modules/<domain>/     service.ts (business logic) · queries.ts (read models) · routes.ts (HTTP)
+    lifecycle/          rules.ts — ALL stage gate rules — and transition.ts (transitionLead)
+    candidates/ outreach/ scrutiny/ vacancies/ interviews/ eval/ redflags/ import/ jobs/ messaging/ …
+prisma/                 schema, migrations, seed
+tests/                  service-level suites + tests/http (auth, RBAC, endpoints via app.inject)
+```
+
+## API conventions
+
+- Versioned under `/v1`. JSON in and out; dates are ISO-8601 UTC strings.
+- **Auth:** `Authorization: Bearer <session JWT>` (issued by `POST /v1/auth/login`, 12h) or the `nt_session` cookie. Roles are reloaded from the database on every request.
+- **Errors** always use one envelope: `{ "error": { "code", "message", "failures?", "requestId" } }` — `UNAUTHORIZED` 401 · `FORBIDDEN` 403 · `NOT_FOUND` 404 · `CONFLICT` 409 · `VALIDATION` / `GATE` 422 · `RATE_LIMITED` 429 · `INTERNAL` 500.
+- Every response carries `x-request-id` (accepted from the caller if present) for log correlation.
+- Interactive docs: `/docs` (disabled in production); machine-readable: `openapi.json`.
+
+## Integrations
+
+| Integration | Endpoint | Auth |
+|---|---|---|
+| NT platform enrolment | `POST /v1/webhooks/nt-enrolment` | `x-nt-signature` = hex HMAC-SHA256 of the raw body with `NT_WEBHOOK_SECRET` |
+| Telephony missed calls (Exotel-style) | `POST` or `GET /v1/telephony/missed-call?token=…` | `TELEPHONY_WEBHOOK_TOKEN` |
+| Scheduler (serverless alternative to the worker) | `POST /v1/cron/run-jobs` | `x-cron-secret` or `Bearer` `CRON_SECRET` |
+| WhatsApp / SMS | `MESSAGING_PROVIDER=live` + `WHATSAPP_*` / `MSG91_*` | provider credentials |
+| Error monitoring | `ERROR_WEBHOOK_URL` receives 5xx errors (Slack-compatible `text`) | — |
+
+The legacy URLs `/api/webhooks/*`, `/api/telephony/*` and `/api/cron/*` on the web origin are proxied here, so existing provider configuration keeps working.
+
+## Business rules that matter
+
+- **`transitionLead(actor, leadId, toStage, payload)` is the only way a stage changes.** It enforces the stage graph, the performer rule and the gate, writes `lead_stage_history` (with an owner snapshot for KPI credit) and `audit_log`, and fires side effects in the same transaction.
+- **Every automated or PII-touching action is audited** (`audit_log`), including PII views and exports.
+- **Contact details are encrypted at rest** (AES-256-GCM) with HMAC blind indexes for dedupe.
+- **KPIs are computed from events**; snapshots freeze at period end and raise automatic red flags against `kpi_targets`.
+- Interpretation decisions: [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## Production notes
+
+- One image runs both the API (`node dist/server.js`) and the worker (`node dist/worker.js`); run migrations as a release step (`npx prisma migrate deploy`).
+- Stateless except for file storage: `UPLOAD_DIR` is local disk. Mount a shared volume, or switch the `Storage` adapter (`src/modules/storage`) to S3 before running more than one API replica.
+- Health: `GET /health` (liveness), `GET /health/ready` (checks the database).
+- Logs are structured JSON (pino); `authorization`, `cookie` and passwords are redacted.

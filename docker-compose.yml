@@ -1,0 +1,49 @@
+# Local stack: Postgres + API + worker.  `docker compose up -d db` for just the database.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nextenti
+      POSTGRES_PASSWORD: nextenti
+      POSTGRES_DB: recruit_crm
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextenti"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://nextenti:nextenti@db:5432/recruit_crm?schema=public
+    depends_on: { db: { condition: service_healthy } }
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://nextenti:nextenti@db:5432/recruit_crm?schema=public
+      NODE_ENV: production
+    ports: ["4000:4000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    volumes: [storage:/data/storage]
+
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://nextenti:nextenti@db:5432/recruit_crm?schema=public
+      NODE_ENV: production
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    volumes: [storage:/data/storage]
+    command: ["node", "dist/worker.js"]
+
+volumes:
+  pgdata:
+  storage:

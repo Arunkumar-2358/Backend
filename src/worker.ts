@@ -1,12 +1,12 @@
 /**
  * Background worker: runs scheduled jobs (follow-ups, 60-day availability
  * check-ins, interview reminders, retention checks, pending-vacancy marking,
- * red-flag due alerts, KPI freezing). `npm run worker`
+ * red-flag due alerts, KPI freezing).
  */
+import { env } from "@/config/env";
 import { ensureRecurringJobs, runDueJobs } from "@/modules/jobs/runner";
 import { prisma } from "@/lib/db";
 
-const INTERVAL_MS = Number(process.env.WORKER_INTERVAL_MS ?? 30_000);
 let stopping = false;
 
 async function tick() {
@@ -20,10 +20,10 @@ async function tick() {
 
 async function main() {
   await ensureRecurringJobs();
-  console.log(`[worker] started, polling every ${INTERVAL_MS / 1000}s`);
+  console.log(`[worker] started, polling every ${env.WORKER_INTERVAL_MS / 1000}s`);
   while (!stopping) {
     await tick();
-    await new Promise((r) => setTimeout(r, INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, env.WORKER_INTERVAL_MS));
   }
   await prisma.$disconnect();
 }
