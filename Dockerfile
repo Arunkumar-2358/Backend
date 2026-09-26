@@ -10,7 +10,7 @@ RUN npm ci
 
 FROM deps AS build
 COPY . .
-RUN npx prisma generate && npm run build && npm prune --omit=dev && npx prisma generate
+RUN npx prisma generate && npm run build && npm prune --omit=dev && npx prisma generate --generator client
 
 FROM base AS runtime
 ENV NODE_ENV=production
