@@ -17,10 +17,11 @@ async function main() {
         return pw;
       }
     : undefined;
+  // Accounts that already exist keep their password, so only accounts created by THIS run get one issued.
+  const existing = new Set((await prisma.user.findMany({ select: { email: true } })).map((u) => u.email));
   await seedCore(prisma, { passwordFor });
   if (production) {
-    const created = await prisma.user.findMany({ where: { email: { in: issued.map(([e]) => e) }, lastLoginAt: null }, select: { email: true } });
-    const fresh = new Set(created.map((u) => u.email));
+    const fresh = new Set(issued.map(([e]) => e).filter((e) => !existing.has(e)));
     console.log("✔ core seed: teams, users, routing rules, templates, presets, holidays, KPI targets, scorecard");
     console.log("Initial passwords for NEW accounts (shown once; existing accounts unchanged). Ask users to change them from Profile:");
     const out = issued.filter(([email]) => fresh.has(email));

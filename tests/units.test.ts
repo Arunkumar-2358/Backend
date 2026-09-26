@@ -111,3 +111,11 @@ describe("PII scrubbing for error reports", () => {
     expect(maskPiiDeep({ a: ["x@y.io"], b: { c: "9123456789" }, n: 5 })).toEqual({ a: ["[email]"], b: { c: "[mobile]" }, n: 5 });
   });
 });
+
+describe("PII scrubbing depth limit", () => {
+  it("redacts anything nested past the limit instead of passing it through", () => {
+    let deep: unknown = { mobile: "9876543210" };
+    for (let i = 0; i < 8; i++) deep = { n: deep };
+    expect(JSON.stringify(maskPiiDeep(deep))).not.toContain("9876543210");
+  });
+});

@@ -26,6 +26,13 @@ describe("HTTP: data import", () => {
     expect(body).toMatchObject({ name: "dump.csv", source: "OTHER", category: "NURSE", location: "Hyderabad" });
   });
 
+  it("validates the multipart text fields like any other input", async () => {
+    const res = await upload("greeshma", { location: "<script>alert(1)</script>" });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.message).toMatch(/^location:/);
+    expect((await upload("greeshma", { location: "x".repeat(200) })).statusCode).toBe(422);
+  });
+
   it("refuses uploads from roles outside import and validates the file", async () => {
     expect((await upload("jennifer")).statusCode).toBe(403);
     const noFile = await upload("greeshma", {}, null);

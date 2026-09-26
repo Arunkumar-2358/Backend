@@ -21,6 +21,16 @@ const text = z
   .optional()
   .transform((v) => (v === undefined || v.trim() === "" ? undefined : v.trim()));
 
+/** Multipart text fields of the upload step (validated like any other request input). */
+const uploadFields = z
+  .object({
+    source: z.string().trim().max(40).optional(),
+    category: z.string().trim().max(40).optional(),
+    location: z.string().trim().max(120).regex(/^[\p{L}\p{N} .,'()/-]*$/u, "contains unsupported characters").optional(),
+  })
+  .passthrough()
+  .transform((v) => ({ source: v.source || undefined, category: v.category || undefined, location: v.location || undefined }));
+
 @Controller()
 export class ImportsController {
   @Endpoint("GET /v1/imports", {
@@ -57,13 +67,15 @@ export class ImportsController {
     }
     if (!parsed.headers.length || !parsed.rows.length) throw new ValidationError("The file has no header row or no data rows");
     const key = await storage.put("imports", file.name, file.data);
-    const category = parseCategoryParam(fields.category?.trim() || undefined);
-    const location = fields.location?.trim() || undefined;
+    const f = uploadFields.safeParse(fields);
+    if (!f.success) throw new ValidationError(`${f.error.issues[0]?.path.join(".")}: ${f.error.issues[0]?.message}`);
+    const category = parseCategoryParam(f.data.category);
+    const location = f.data.location;
     return {
       message: "File uploaded",
       file: key,
       name: file.name,
-      source: parseSourceParam(fields.source?.trim() || undefined),
+      source: parseSourceParam(f.data.source),
       ...(category ? { category } : {}),
       ...(location ? { location } : {}),
     };

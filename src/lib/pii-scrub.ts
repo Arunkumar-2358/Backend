@@ -9,8 +9,10 @@ export function maskPii(text: string): string {
 
 /** Deep-copies a JSON-ish value with every string masked. */
 export function maskPiiDeep<T>(v: T, depth = 0): T {
+  // Past the depth limit nothing is inspected, so nothing is let through.
+  if (depth > 6) return (v && typeof v === "object") || typeof v === "string" ? ("[redacted]" as T) : v;
   if (typeof v === "string") return maskPii(v) as T;
-  if (!v || typeof v !== "object" || depth > 6) return v;
+  if (!v || typeof v !== "object") return v;
   if (Array.isArray(v)) return v.map((x) => maskPiiDeep(x, depth + 1)) as T;
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskPiiDeep(x, depth + 1)])) as T;
 }

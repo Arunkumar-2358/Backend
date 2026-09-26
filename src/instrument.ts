@@ -17,6 +17,7 @@ if (process.env.SENTRY_DSN) {
           delete event.request.headers.authorization;
           delete event.request.headers.cookie;
         }
+        if (event.request.url) event.request.url = maskPii(event.request.url.split(/[?#]/)[0] ?? "");
         if (event.request.query_string) event.request.query_string = "[redacted]";
       }
       // Error messages can quote input ("Invalid mobile 98…"): mask contact details everywhere text travels.
