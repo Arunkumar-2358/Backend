@@ -66,9 +66,10 @@ export class ImportsController {
       throw new ValidationError("Could not read that file — is it a valid .xlsx / .csv?");
     }
     if (!parsed.headers.length || !parsed.rows.length) throw new ValidationError("The file has no header row or no data rows");
-    const key = await storage.put("imports", file.name, file.data);
+    // Validate every input before storing anything, so a rejected request leaves no orphaned upload.
     const f = uploadFields.safeParse(fields);
     if (!f.success) throw new ValidationError(`${f.error.issues[0]?.path.join(".")}: ${f.error.issues[0]?.message}`);
+    const key = await storage.put("imports", file.name, file.data);
     const category = parseCategoryParam(f.data.category);
     const location = f.data.location;
     return {

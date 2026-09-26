@@ -108,6 +108,7 @@ describe("PII scrubbing for error reports", () => {
     expect(maskPii("Invalid mobile 9876543210 for priya.s@example.com")).toBe("Invalid mobile [mobile] for [email]");
     expect(maskPii("dup of +91 98765-43210 / 098765 43210")).toBe("dup of [mobile] / [mobile]");
     expect(maskPii("lead cmuhx123 on 2026-09-26, VAC00012")).toBe("lead cmuhx123 on 2026-09-26, VAC00012");
+    expect(maskPii("GET /api/v1/files/resumes/4f1c-Priya_Sharma_CV.pdf failed")).toBe("GET /api/v1/files/[file] failed");
     expect(maskPiiDeep({ a: ["x@y.io"], b: { c: "9123456789" }, n: 5 })).toEqual({ a: ["[email]"], b: { c: "[mobile]" }, n: 5 });
   });
 });

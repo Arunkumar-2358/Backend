@@ -31,6 +31,12 @@ describe("HTTP: data import", () => {
     expect(res.statusCode).toBe(422);
     expect(res.json().error.message).toMatch(/^location:/);
     expect((await upload("greeshma", { location: "x".repeat(200) })).statusCode).toBe(422);
+    // Nothing was stored for the rejected requests.
+    const { readdir } = await import("node:fs/promises");
+    const dir = `${process.env.UPLOAD_DIR}/imports`;
+    const before = await readdir(dir).catch(() => []);
+    await upload("greeshma", { location: "<bad>" });
+    expect(await readdir(dir).catch(() => [])).toEqual(before);
   });
 
   it("refuses uploads from roles outside import and validates the file", async () => {

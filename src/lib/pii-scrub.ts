@@ -1,10 +1,12 @@
 /** Masks candidate contact details in free text before it leaves the system (error reports, logs). */
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+// Stored-file paths (/v1/files/<key>, /api/v1/files/<key>): keys embed original filenames, often the candidate's name.
+const FILE_PATH = /(\/files\/)[^?#\s"']+/g;
 // 10-digit Indian mobiles, optionally with +91 / 0 prefixes and separators.
 const MOBILE = /(?:\+?91[\s-]?|0)?[6-9](?:[\s-]?\d){9}\b/g;
 
 export function maskPii(text: string): string {
-  return text.replace(EMAIL, "[email]").replace(MOBILE, "[mobile]");
+  return text.replace(FILE_PATH, "$1[file]").replace(EMAIL, "[email]").replace(MOBILE, "[mobile]");
 }
 
 /** Deep-copies a JSON-ish value with every string masked. */
