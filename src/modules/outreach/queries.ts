@@ -7,7 +7,7 @@ import { decrypt } from "@/lib/crypto";
 import { getSetting } from "@/lib/settings";
 import { ForbiddenError, canEditLead, canReadAll, hasRole } from "@/lib/rbac";
 import { startOfIstWeek } from "@contracts/shared/dates";
-import { notFound } from "@/plugins/errors";
+import { notFound } from "@/lib/http-errors";
 import type { UserActor } from "@/http/route";
 import { decryptCandidate, logPiiView } from "@/modules/candidates/service";
 import { teamMembers } from "@/modules/users/assignment";

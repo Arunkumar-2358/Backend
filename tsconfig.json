@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": [
+      "ES2023"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -10,9 +12,32 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["node"],
-    "paths": { "@/*": ["./src/*"], "@contracts": ["./contracts/index.ts"], "@contracts/*": ["./contracts/*"] }
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@contracts": [
+        "./contracts/index.ts"
+      ],
+      "@contracts/*": [
+        "./contracts/*"
+      ]
+    },
+    "experimentalDecorators": true
   },
-  "include": ["src", "contracts", "tests", "scripts", "prisma", "*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src",
+    "contracts",
+    "tests",
+    "scripts",
+    "prisma",
+    "*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

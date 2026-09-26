@@ -1,37 +1,40 @@
-import type { FastifyInstance } from "fastify";
-import { authRoutes } from "./auth/routes";
-import { exportRoutes } from "./exports/routes";
-import { fileRoutes } from "./files/routes";
-import { integrationRoutes } from "./integrations/routes";
-import { pushRoutes } from "./push/routes";
-import { notificationRoutes } from "./notifications/routes";
-import { taskRoutes } from "./tasks/routes";
-import { leadRoutes } from "./candidates/routes";
-import { outreachRoutes } from "./outreach/routes";
-import { profileRoutes } from "./users/routes";
-import { vacancyRoutes } from "./vacancies/routes";
-import { evaluationRoutes } from "./eval/routes";
-import { kpiRoutes } from "./kpi/routes";
-import { redFlagRoutes } from "./redflags/routes";
-import { importRoutes } from "./import/routes";
-import { adminRoutes } from "./admin/routes";
+import { HealthModule } from "./health/health.controller";
+import { MetricsModule } from "@/platform/metrics";
+import { AuthModule } from "./auth/auth.controller";
+import { TasksModule } from "./tasks/tasks.controller";
+import { PushModule } from "./push/push.controller";
+import { NotificationsModule } from "./notifications/notifications.controller";
+import { LeadsModule } from "./candidates/candidates.controller";
+import { OutreachModule } from "./outreach/outreach.controller";
+import { ProfileModule } from "./users/users.controller";
+import { VacanciesModule } from "./vacancies/vacancies.controller";
+import { EvaluationsModule } from "./eval/eval.controller";
+import { KpiModule } from "./kpi/kpi.controller";
+import { RedFlagsModule } from "./redflags/redflags.controller";
+import { ImportsModule } from "./import/import.controller";
+import { AdminModule } from "./admin/admin.controller";
+import { FilesModule } from "./files/files.controller";
+import { ExportsModule } from "./exports/exports.controller";
+import { IntegrationsModule } from "./integrations/integrations.controller";
 
-/** Route plugins mounted by buildApp, one per domain. */
-export const modules: Array<(app: FastifyInstance) => Promise<void>> = [
-  authRoutes,
-  pushRoutes,
-  taskRoutes,
-  notificationRoutes,
-  leadRoutes,
-  outreachRoutes,
-  profileRoutes,
-  vacancyRoutes,
-  evaluationRoutes,
-  kpiRoutes,
-  redFlagRoutes,
-  importRoutes,
-  adminRoutes,
-  fileRoutes,
-  exportRoutes,
-  integrationRoutes,
+/** Domain modules mounted by AppModule, one per bounded context. */
+export const domainModules = [
+  HealthModule,
+  MetricsModule,
+  AuthModule,
+  PushModule,
+  TasksModule,
+  NotificationsModule,
+  LeadsModule,
+  OutreachModule,
+  ProfileModule,
+  VacanciesModule,
+  EvaluationsModule,
+  KpiModule,
+  RedFlagsModule,
+  ImportsModule,
+  AdminModule,
+  FilesModule,
+  ExportsModule,
+  IntegrationsModule,
 ];
