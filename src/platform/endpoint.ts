@@ -172,9 +172,11 @@ export function RawEndpoint(method: Method, path: string, opts: RawEndpointOptio
     const original = descriptor.value as (ctx: RawCtx) => Promise<unknown>;
     descriptor.value = async function (this: unknown, ctx: RawCtx) {
       const result = await original.call(this, ctx);
-      if (!ctx.reply.sent) await ctx.reply.status(ctx.reply.statusCode === 200 ? meta.status : ctx.reply.statusCode).send(result);
+      // HttpCode below sets meta.status before the handler runs; the handler may still override it (e.g. 503).
+      if (!ctx.reply.sent) await ctx.reply.send(result);
     };
-    applyDecorators(METHOD_DECORATOR[method](toRouterPath(path)), SetMetadata(ENDPOINT_META, meta), ...extra)(target, prop, descriptor);
+    // Applied after replacing descriptor.value so the metadata lands on the function Nest actually calls.
+    applyDecorators(METHOD_DECORATOR[method](toRouterPath(path)), HttpCode(meta.status), SetMetadata(ENDPOINT_META, meta), ...extra)(target, prop, descriptor);
     EndpointContext(meta)(target, prop, 0);
     // @Res() tells Nest the handler owns the reply (the wrapper above always sends it).
     Res()(target, prop, 1);

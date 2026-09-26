@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import Fastify, { type FastifyServerOptions } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
@@ -16,6 +16,42 @@ import { observeHttp } from "@/platform/metrics";
 
 export const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
+type RawBodyRequest = FastifyRequest & { rawBody?: Buffer };
+
+/** Form fields; repeated keys become arrays (same shape as @fastify/formbody). */
+function parseForm(text: string): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = Object.create(null);
+  for (const [k, v] of new URLSearchParams(text)) {
+    const prev = out[k];
+    out[k] = prev === undefined ? v : Array.isArray(prev) ? [...prev, v] : [prev, v];
+  }
+  return out;
+}
+
+/**
+ * JSON, forms and a text catch-all, each keeping `req.rawBody` so webhook HMACs
+ * are verified over the exact bytes. JSON uses Fastify's hardened parser
+ * (rejects __proto__ / constructor poisoning); an empty JSON body is treated as
+ * no body rather than an error, because some IVR providers send exactly that.
+ */
+function registerBodyParsers(app: FastifyInstance) {
+  const json = app.getDefaultJsonParser("error", "error");
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body: Buffer, done) => {
+    (req as RawBodyRequest).rawBody = body;
+    if (body.length === 0) return done(null, undefined);
+    json(req, body.toString("utf8"), done);
+  });
+  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "buffer" }, (req, body: Buffer, done) => {
+    (req as RawBodyRequest).rawBody = body;
+    done(null, parseForm(body.toString("utf8")));
+  });
+  // IVR providers are loose about content types: accept anything else as text.
+  app.addContentTypeParser("*", { parseAs: "buffer" }, (req, body: Buffer, done) => {
+    (req as RawBodyRequest).rawBody = body;
+    done(null, body.toString("utf8"));
+  });
+}
+
 export type BuildOptions = { logger?: FastifyServerOptions["logger"]; docs?: boolean; nestLogLevels?: LogLevel[] | false };
 
 /** The NestJS application on Fastify. Tests call `.getHttpAdapter().getInstance().inject()`. */
@@ -26,7 +62,8 @@ export async function buildApp(opts: BuildOptions = {}): Promise<NestFastifyAppl
       const given = req.headers["x-request-id"];
       return typeof given === "string" && /^[\w.-]{1,100}$/.test(given) ? given : randomUUID();
     },
-    requestIdHeader: "x-request-id",
+    // false: genReqId (above) validates the caller's x-request-id instead of Fastify trusting it verbatim.
+    requestIdHeader: false,
     trustProxy: true,
     bodyLimit: MAX_UPLOAD_BYTES,
   });
@@ -34,12 +71,11 @@ export async function buildApp(opts: BuildOptions = {}): Promise<NestFastifyAppl
     reply.header("x-request-id", req.id);
   });
   observeHttp(fastify);
-  // IVR providers are loose about content types: accept anything as text (JSON and forms are parsed by Nest).
-  fastify.addContentTypeParser("*", { parseAs: "string" }, (_req, body, done) => done(null, body));
+  registerBodyParsers(fastify);
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(fastify as never), {
-    // rawBody keeps the exact bytes for webhook signature checks (req.rawBody).
-    rawBody: true,
+    // Body parsing is ours (registerBodyParsers): exact bytes kept for webhook signatures.
+    bodyParser: false,
     logger: opts.nestLogLevels ?? (env.NODE_ENV === "test" ? false : ["error", "warn", "log"]),
     abortOnError: false,
   });

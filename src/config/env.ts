@@ -35,10 +35,13 @@ const schema = z
     S3_ACCESS_KEY_ID: optional,
     S3_SECRET_ACCESS_KEY: optional,
     S3_FORCE_PATH_STYLE: flag.optional(),
+    /** "none" only for MinIO without KMS; AWS S3 should keep AES256 (or aws:kms). */
+    S3_SERVER_SIDE_ENCRYPTION: z.enum(["AES256", "aws:kms", "none"]).default("AES256"),
 
     /** ClamAV daemon for malware scanning on upload. When set, uploads fail closed if it cannot be reached. */
     CLAMAV_HOST: optional,
     CLAMAV_PORT: z.coerce.number().int().positive().default(3310),
+    CLAMAV_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
     NT_WEBHOOK_SECRET: optional,
     TELEPHONY_WEBHOOK_TOKEN: optional,
@@ -65,6 +68,8 @@ const schema = z
 
     WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
+    /** Worker liveness (/healthz) and Prometheus (/metrics, METRICS_TOKEN) port; off when unset. */
+    WORKER_HEALTH_PORT: z.coerce.number().int().positive().optional(),
   })
   .superRefine((e, ctx) => {
     if (e.NODE_ENV !== "production") return;
@@ -74,6 +79,7 @@ const schema = z
     need("REDIS_URL", "scheduled automation and rate limiting");
     if (e.STORAGE_DRIVER !== "s3") ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["STORAGE_DRIVER"], message: "must be s3 in production (local disk breaks with more than one replica)" });
     if (e.STORAGE_DRIVER === "s3") need("S3_BUCKET", "object storage");
+    need("CLAMAV_HOST", "malware scanning of uploaded CVs and imports");
     if (e.SESSION_SECRET.startsWith("dev-") || e.SESSION_SECRET.includes("change-me")) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["SESSION_SECRET"], message: "looks like a development placeholder" });
   });
 

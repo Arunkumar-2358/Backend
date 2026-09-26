@@ -13,6 +13,7 @@ import { KPI_BY_KEY, SHEETS } from "@/kpi/definitions";
 import { freezeDuePeriods } from "@/kpi/snapshots";
 import { ensureRecurringJobs, runDueJobs } from "@/modules/jobs/runner";
 import { processDeletionRequest } from "@/modules/candidates/service";
+import { revokeUserSessions } from "@/modules/auth/sessions";
 import { TARGETABLE_UNITS, utcDay } from "./helpers";
 
 type UserActor = Extract<Actor, { kind: "user" }>;
@@ -70,6 +71,9 @@ export async function removeGrant(actor: UserActor, id: string) {
     if (!otherAdmins) throw new ValidationError("You are the only active admin — add another admin first");
   }
   await prisma.userTeamRole.delete({ where: { id } });
+  // Roles are reloaded on every request; revoking also ends refresh tokens minted under the old grants.
+  // The acting admin trimming their own grants keeps their session.
+  if (g.userId !== actor.id) await revokeUserSessions(g.userId, "role grant removed by admin");
   await audit(actor, "SETTING_CHANGE", "user", g.userId, { action: "grant_removed", team: g.team.code, role: g.role, category: g.category });
   return "Grant removed";
 }
@@ -77,6 +81,7 @@ export async function removeGrant(actor: UserActor, id: string) {
 export async function setUserActive(actor: UserActor, userId: string, active: boolean) {
   if (userId === actor.id && !active) throw new ValidationError("You cannot deactivate yourself");
   await prisma.user.update({ where: { id: userId }, data: { active } });
+  if (!active) await revokeUserSessions(userId, "deactivated by admin");
   await audit(actor, "SETTING_CHANGE", "user", userId, { active: { from: !active, to: active } });
   return active ? "User activated" : "User deactivated — they are signed out on their next request";
 }
@@ -84,6 +89,7 @@ export async function setUserActive(actor: UserActor, userId: string, active: bo
 export async function resetPassword(actor: Actor, userId: string, password: string | undefined) {
   if (!password || password.length < 8) throw new ValidationError("Temporary password must be at least 8 characters");
   await prisma.user.update({ where: { id: userId }, data: { passwordHash: await bcrypt.hash(password, 10) } });
+  await revokeUserSessions(userId, "password reset by admin");
   await audit(actor, "SETTING_CHANGE", "user", userId, { action: "password_reset" });
   return "Temporary password set";
 }

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { now } from "@/lib/clock";
 import { addDays, periodRange, startOfIstDay } from "@contracts/shared/dates";
 import { hasRole, leaderTeams, leadScope, stagesOwnedBy } from "@/lib/rbac";
-import type { UserActor } from "@/http/route";
+import type { UserActor } from "@/platform/endpoint";
 import { SHEETS } from "@/kpi/definitions";
 import { computeSheet, computeSheetTable, sheetMembers } from "@/kpi/engine";
 import { canExportKpis, parsePeriod, seesAllKpis, visibleSheets } from "@/kpi/access";

@@ -6,7 +6,7 @@ import { getSetting } from "@/lib/settings";
 import { addWorkingDays, istDateKey, periodRange } from "@contracts/shared/dates";
 import { canManageRedFlags, leaderTeams, ForbiddenError, type Actor } from "@/lib/rbac";
 import { notFound } from "@/lib/http-errors";
-import type { UserActor } from "@/http/route";
+import type { UserActor } from "@/platform/endpoint";
 import { SHEETS, formatKpi, metricsFor } from "@/kpi/definitions";
 import { holidaySet } from "./service";
 

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { ValidationError } from "@/lib/errors";
 import { validateMobile } from "@contracts/shared/phone";
-import type { UserActor } from "@/http/route";
+import type { UserActor } from "@/platform/endpoint";
 
 /** Self-service edit of the signed-in user's name and work mobile. */
 export async function updateOwnProfile(actor: UserActor, input: { name?: string; phone?: string }) {

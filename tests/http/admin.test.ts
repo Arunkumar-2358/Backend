@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "@/lib/db";
 import { SYSTEM } from "@/lib/rbac";
 import { requestDataDeletion } from "@/modules/candidates/service";
-import { emailFor } from "@/modules/seed/core";
+import { DEV_PASSWORD, emailFor } from "@/modules/seed/core";
 import { newLead, resetDb, userId } from "../helpers";
 import { call } from "./client";
 
@@ -107,6 +107,32 @@ describe("HTTP: admin users & roles", () => {
     expect((await call({ method: "POST", url: `/v1/admin/users/${jen}/password`, payload: { password: "newpassword" }, as: "admin" })).json().message).toBe("Temporary password set");
     expect((await prisma.user.findUniqueOrThrow({ where: { id: jen } })).passwordHash).not.toBe(before);
     expect((await call({ method: "POST", url: `/v1/admin/users/${jen}/password`, payload: { password: "x" }, as: "admin" })).statusCode).toBe(422);
+  });
+
+  it("signs a user out everywhere when an admin deactivates them, resets their password or removes a grant", async () => {
+    const loginAs = async (key: string) => (await call({ method: "POST", url: "/v1/auth/login", payload: { email: emailFor(key), password: DEV_PASSWORD } })).json();
+    const shell = (token: string) => call({ method: "GET", url: "/v1/me/shell", headers: { authorization: `Bearer ${token}` } });
+    const refresh = (refreshToken: string) => call({ method: "POST", url: "/v1/auth/refresh", payload: { refreshToken } });
+    const jen = await userId("jennifer");
+
+    const s1 = await loginAs("jennifer");
+    expect((await shell(s1.token)).statusCode).toBe(200);
+    expect((await call({ method: "POST", url: `/v1/admin/users/${jen}/active`, payload: { active: false }, as: "admin" })).statusCode).toBe(200);
+    expect((await shell(s1.token)).statusCode).toBe(401);
+    expect((await refresh(s1.refreshToken)).statusCode).toBe(401);
+
+    await prisma.user.update({ where: { id: jen }, data: { active: true } });
+    const s2 = await loginAs("jennifer");
+    expect((await call({ method: "POST", url: `/v1/admin/users/${jen}/password`, payload: { password: "newpassword" }, as: "admin" })).statusCode).toBe(200);
+    expect((await shell(s2.token)).statusCode).toBe(401);
+    expect((await refresh(s2.refreshToken)).statusCode).toBe(401);
+
+    const sara = await userId("sarala");
+    const s3 = await loginAs("sarala");
+    const grant = await prisma.userTeamRole.findFirstOrThrow({ where: { userId: sara } });
+    expect((await call({ method: "DELETE", url: `/v1/admin/grants/${grant.id}`, as: "admin" })).statusCode).toBe(200);
+    expect((await shell(s3.token)).statusCode).toBe(401);
+    expect((await refresh(s3.refreshToken)).statusCode).toBe(401);
   });
 });
 

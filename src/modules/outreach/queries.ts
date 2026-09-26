@@ -8,7 +8,7 @@ import { getSetting } from "@/lib/settings";
 import { ForbiddenError, canEditLead, canReadAll, hasRole } from "@/lib/rbac";
 import { startOfIstWeek } from "@contracts/shared/dates";
 import { notFound } from "@/lib/http-errors";
-import type { UserActor } from "@/http/route";
+import type { UserActor } from "@/platform/endpoint";
 import { decryptCandidate, logPiiView } from "@/modules/candidates/service";
 import { teamMembers } from "@/modules/users/assignment";
 

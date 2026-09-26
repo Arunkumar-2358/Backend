@@ -42,6 +42,26 @@ describe("HTTP: my profile", () => {
     expect(login.statusCode).toBe(200);
   });
 
+  it("signs out the user's other devices when the password changes, keeping the current one", async () => {
+    const login = async () => (await call({ method: "POST", url: "/v1/auth/login", payload: { email: emailFor("jennifer"), password: DEV_PASSWORD } })).json();
+    const profileWith = (token: string) => call({ method: "GET", url: "/v1/me/profile", headers: { authorization: `Bearer ${token}` } });
+    const current = await login();
+    const other = await login();
+    expect((await profileWith(other.token)).statusCode).toBe(200);
+
+    const res = await call({
+      method: "PUT",
+      url: "/v1/me/password",
+      headers: { authorization: `Bearer ${current.token}` },
+      payload: { current: DEV_PASSWORD, next: "abcd1234", confirm: "abcd1234" },
+    });
+    expect(res.json().message).toBe("Password changed");
+
+    expect((await profileWith(other.token)).statusCode).toBe(401);
+    expect((await call({ method: "POST", url: "/v1/auth/refresh", payload: { refreshToken: other.refreshToken } })).statusCode).toBe(401);
+    expect((await profileWith(current.token)).statusCode).toBe(200);
+  });
+
   it("saves the theme preference and rejects unknown themes", async () => {
     const ok = await call({ method: "PUT", url: "/v1/me/theme", as: "jennifer", payload: { theme: "dark" } });
     expect(ok.json()).toEqual({ message: "Theme saved", theme: "dark" });

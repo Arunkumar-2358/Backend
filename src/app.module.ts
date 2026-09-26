@@ -12,7 +12,8 @@ import { domainModules } from "@/modules";
     ThrottlerModule.forRoot({
       throttlers: [{ name: "default", ttl: 60_000, limit: env.RATE_LIMIT_PER_MINUTE }],
       // Shared counters across API replicas; in-memory when Redis is not configured (dev/test).
-      storage: env.REDIS_URL ? new ThrottlerStorageRedisService(redisConnection({ keyPrefix: `${env.QUEUE_PREFIX}:throttle:` })) : undefined,
+      // Tests stay in-memory so counters never leak between test files through a shared Redis.
+      storage: env.REDIS_URL && env.NODE_ENV !== "test" ? new ThrottlerStorageRedisService(redisConnection({ keyPrefix: `${env.QUEUE_PREFIX}:throttle:` })) : undefined,
     }),
     ...domainModules,
   ],

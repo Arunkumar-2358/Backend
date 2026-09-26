@@ -6,7 +6,7 @@ import { getSetting } from "@/lib/settings";
 import { isStageLeader } from "@/lib/rbac";
 import { startOfIstMonth, startOfIstWeek } from "@contracts/shared/dates";
 import { completenessPct, missingMandatory } from "@contracts/shared/fields";
-import type { UserActor } from "@/http/route";
+import type { UserActor } from "@/platform/endpoint";
 import { decryptCandidate } from "@/modules/candidates/service";
 
 // ───────────── Availability check-ins ─────────────
