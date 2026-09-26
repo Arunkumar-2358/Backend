@@ -18,6 +18,9 @@ Owner: on-call engineer · Applies to: `Backend` (API + worker) and `Frontend` (
       `SESSION_SECRET` (`openssl rand -hex 32`, **same value on API and web**), `PII_ENCRYPTION_KEY`
       (**must be the existing production key if data already exists — changing it makes stored contact details unreadable**),
       `METRICS_TOKEN`, `CRON_SECRET`, `NT_WEBHOOK_SECRET`, `TELEPHONY_WEBHOOK_TOKEN`, VAPID keys.
+- [ ] **Never seed production with the dev password.** The repo is public and `Nextenti@123` is in it.
+      `NODE_ENV=production npm run db:seed` gives each new account a unique random password (printed once)
+      and skips demo data. If any environment was ever seeded with the dev password, reset every account.
 - [ ] Announce: "Everyone will be asked to sign in again once after the release."
 
 ## 1. Environment

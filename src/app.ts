@@ -16,6 +16,15 @@ import { observeHttp } from "@/platform/metrics";
 
 export const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
+/** "2" → trust the nearest 2 hops; otherwise proxy-addr names/CIDRs ("loopback,10.0.0.0/8"). */
+function trustProxySetting(v: string): string[] | ((addr: string, hop: number) => boolean) {
+  if (/^\d+$/.test(v)) {
+    const hops = Number(v);
+    return (_addr, hop) => hop < hops;
+  }
+  return v.split(",").map((x) => x.trim()).filter(Boolean);
+}
+
 type RawBodyRequest = FastifyRequest & { rawBody?: Buffer };
 
 /** Form fields; repeated keys become arrays (same shape as @fastify/formbody). */
@@ -64,7 +73,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<NestFastifyAppl
     },
     // false: genReqId (above) validates the caller's x-request-id instead of Fastify trusting it verbatim.
     requestIdHeader: false,
-    trustProxy: /^\d+$/.test(env.TRUST_PROXY) ? Number(env.TRUST_PROXY) : env.TRUST_PROXY.split(",").map((x) => x.trim()),
+    trustProxy: trustProxySetting(env.TRUST_PROXY),
     bodyLimit: MAX_UPLOAD_BYTES,
   });
   fastify.addHook("onSend", async (req, reply) => {
