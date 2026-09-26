@@ -2,33 +2,35 @@
 
 Backend service for **Nextenti Recruit CRM**: the 9-stage healthcare recruitment life cycle (raw data dump → 30 days retained in the job), CV register and talent pool, outreach, sourcing, interviews and joining, scorecards, red flags / CAPA and weekly / monthly KPIs.
 
-It is consumed by [`Frontend`](../Frontend) (the Next.js UI) and by machine integrations (NT platform, telephony, schedulers). Product spec: [docs/PLAN.md](docs/PLAN.md). Why the system is split this way: [docs/adr/0001-split-web-and-api.md](docs/adr/0001-split-web-and-api.md).
+It is consumed by [`Frontend`](../Frontend) (the Next.js UI) and by machine integrations (NT platform, telephony, schedulers). Product spec: [docs/PLAN.md](docs/PLAN.md). Architecture decisions: [0001 — split web and API](docs/adr/0001-split-web-and-api.md), [0002 — adopt the PRD's ADR-1 platform](docs/adr/0002-adopt-prd-adr1-platform.md).
 
 ```
- Browser ──► Frontend (Next.js) ──Bearer JWT──► Backend (Fastify) ──► PostgreSQL
-                    │  /api/v1/* proxied                    ▲          │
-                    └───────────────────────────────────────┘          └──► storage (resumes, videos)
-      NT platform / Exotel / cron ──────────────────────────► /v1/webhooks · /v1/telephony · /v1/cron
-                                                      worker (same image) ──► scheduled_jobs
+ Browser ──► Frontend (Next.js) ──access JWT──► Backend (NestJS on Fastify) ──► PostgreSQL (source of truth,
+                    │  /api/v1/* proxied        │   guards · throttler · filters      scheduled_jobs outbox)
+                    │  refresh in middleware    ├──► S3 / MinIO (CVs, videos, imports) ◄── ClamAV scan
+                    └───────────────────────────┤──► Redis (rate limits)
+      NT platform / Exotel / cron ─────────────►│   /v1/webhooks · /v1/telephony · /v1/cron
+                                   worker (same image) ◄──► Redis / BullMQ ◄── dispatcher reads the outbox
 ```
 
 ## Stack
 
-Node 22 · TypeScript · Fastify 5 · Prisma 6 / PostgreSQL 16 · zod · Vitest · tsup · Docker
+Node 22 · TypeScript · NestJS 11 (Fastify adapter) · Prisma 6 / PostgreSQL 16 · Redis 7 + BullMQ · S3 / MinIO · ClamAV · zod · Sentry · Prometheus · Vitest · tsup · Docker
 
 ## Quick start
 
 ```bash
 npm install
 cp .env.example .env               # set DATABASE_URL, SESSION_SECRET, PII_ENCRYPTION_KEY
-docker compose up -d db            # or use a local Postgres
+docker compose up -d db redis      # or local Postgres; Redis is optional in dev (worker falls back to polling)
+# optional, to mirror production storage + scanning: docker compose up -d minio bucket clamav
 npm run db:deploy                  # apply migrations
 npm run db:seed                    # teams, users, rules, templates, demo data (SEED_DEMO=0 skips demo data)
 npm run dev                        # http://localhost:4000  ·  API docs at http://localhost:4000/docs
 npm run dev:worker                 # second terminal: reminders, check-ins, retention checks, KPI freezing
 ```
 
-Full backend stack in containers: `docker compose up --build` (db → migrate → api + worker).
+Full backend stack in containers, configured like production (Redis, MinIO, ClamAV): `docker compose up --build`.
 
 **Dev logins** (seeded): `<firstname>@nextenti.ai` / `Nextenti@123` — e.g. `admin`, `greeshma` (data analyst), `sumitha` (TA coordinator), `sarala` (Team 1 leader), `jennifer` (TA lead), `bhavani` (tele-caller), `dixha` (Team 2 leader), `srividya` (sourcer), `sanjay` (Team 3 leader), `harsha` (recruiter).
 
@@ -53,16 +55,19 @@ contracts/              public API surface, copied into the web app (see contrac
   routes/<domain>.ts    endpoint map: "METHOD /v1/path/{param}" → { params, query, body, response }
   shared/               dependency-free domain helpers used by both sides (RBAC predicates, stage graph, fields, dates…)
 src/
-  app.ts                buildApp(): plugins + modules (tests use app.inject)
-  server.ts · worker.ts process entry points
-  config/env.ts         zod-validated environment — the process refuses to start on bad config
-  http/route.ts         typed route registration checked against contracts
-  plugins/              auth (bearer/cookie → actor), error envelope, OpenAPI docs
+  app.ts · app.module.ts buildApp(): NestJS on our Fastify instance, body parsers, global guards/filter
+  server.ts · worker.ts process entry points (instrument.ts loads Sentry first)
+  config/env.ts         zod-validated environment — refuses to start on bad or unsafe production config
+  platform/             endpoint.ts (@Endpoint / @RawEndpoint, contract-typed), guards (auth, throttle),
+                        errors (envelope + Sentry), auth (session check), openapi, metrics, redis
   lib/                  db, clock (injectable), PII crypto, audit, settings, RBAC lead scope
   kpi/                  metric registry, engine, snapshots + auto red flags, Excel export
-  modules/<domain>/     service.ts (business logic) · queries.ts (read models) · routes.ts (HTTP)
+  modules/<domain>/     service.ts (business logic) · queries.ts (read models) · <domain>.controller.ts (Nest)
     lifecycle/          rules.ts — ALL stage gate rules — and transition.ts (transitionLead)
-    candidates/ outreach/ scrutiny/ vacancies/ interviews/ eval/ redflags/ import/ jobs/ messaging/ …
+    auth/               login, refresh-token sessions (rotation + reuse detection), logout
+    jobs/               outbox (queue.ts), executor (runner.ts), BullMQ dispatcher/processor (bullmq.ts)
+    storage/            local / S3 drivers, content sniffing, ClamAV
+    candidates/ outreach/ scrutiny/ vacancies/ interviews/ eval/ redflags/ import/ messaging/ …
 prisma/                 schema, migrations, seed
 tests/                  service-level suites + tests/http (auth, RBAC, endpoints via app.inject)
 ```
@@ -70,7 +75,8 @@ tests/                  service-level suites + tests/http (auth, RBAC, endpoints
 ## API conventions
 
 - Versioned under `/v1`. JSON in and out; dates are ISO-8601 UTC strings.
-- **Auth:** `Authorization: Bearer <session JWT>` (issued by `POST /v1/auth/login`, 12h) or the `nt_session` cookie. Roles are reloaded from the database on every request.
+- **Auth:** `Authorization: Bearer <access JWT>` or the `nt_session` cookie. `POST /v1/auth/login` returns a 15-minute access token and a single-use refresh token; `POST /v1/auth/refresh` rotates both (reuse of an old refresh token revokes the session). `POST /v1/auth/logout` / `logout-all` end sessions. Roles are reloaded and the session is checked on every request, so deactivation, password changes and logout take effect immediately.
+- **Rate limits:** 600 req/min per IP globally; login 10/min per IP + email; shared across replicas via Redis.
 - **Errors** always use one envelope: `{ "error": { "code", "message", "failures?", "requestId" } }` — `UNAUTHORIZED` 401 · `FORBIDDEN` 403 · `NOT_FOUND` 404 · `CONFLICT` 409 · `VALIDATION` / `GATE` 422 · `RATE_LIMITED` 429 · `INTERNAL` 500.
 - Every response carries `x-request-id` (accepted from the caller if present) for log correlation.
 - Interactive docs: `/docs` (disabled in production); machine-readable: `openapi.json`.
@@ -97,7 +103,10 @@ The legacy URLs `/api/webhooks/*`, `/api/telephony/*` and `/api/cron/*` on the w
 
 ## Production notes
 
-- One image runs both the API (`node dist/server.js`) and the worker (`node dist/worker.js`); run migrations as a release step (`npx prisma migrate deploy`).
-- Stateless except for file storage: `UPLOAD_DIR` is local disk. Mount a shared volume, or switch the `Storage` adapter (`src/modules/storage`) to S3 before running more than one API replica.
-- Health: `GET /health` (liveness), `GET /health/ready` (checks the database).
+- One image runs both the API (`node dist/server.js`) and the worker (`node dist/worker.js`); run migrations as a release step (`npx prisma migrate deploy`). Migrations are additive and safe to run before the new image rolls out.
+- In production the process refuses to start without `REDIS_URL`, `STORAGE_DRIVER=s3` + `S3_BUCKET`, or with a placeholder `SESSION_SECRET`. The API is stateless and scales horizontally.
+- Scheduled automation: `scheduled_jobs` is a transactional outbox; the worker dispatches due rows to BullMQ and claims each row before running it, so the `/v1/cron/run-jobs` fallback can stay enabled. Losing Redis delays jobs, never loses them.
+- Health: `GET /health` (liveness), `GET /health/ready` (database + Redis). Worker: `WORKER_HEALTH_PORT` → `/healthz`, `/metrics`.
+- Metrics: `GET /metrics` with `Authorization: Bearer $METRICS_TOKEN` (Prometheus). Errors: `SENTRY_DSN` (PII scrubbed).
+- The first deploy of this version signs everyone out once (older tokens have no session id).
 - Logs are structured JSON (pino); `authorization`, `cookie` and passwords are redacted.
