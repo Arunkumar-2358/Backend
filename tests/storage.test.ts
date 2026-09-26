@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { CreateBucketCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import ExcelJS from "exceljs";
 import { ValidationError } from "@/lib/errors";
@@ -187,7 +187,7 @@ describe("ClamAV scanning (fake clamd)", () => {
       const err = await new LocalStorage(path.join(dir, "infected")).put("resumes", "cv.pdf", pdf).catch((e) => e);
       expect(err).toBeInstanceOf(ValidationError);
       expect(err.message).toBe("File rejected: malware detected");
-      await expect(readFile(path.join(dir, "infected"))).rejects.toThrow(); // directory never created
+      await expect(stat(path.join(dir, "infected"))).rejects.toMatchObject({ code: "ENOENT" }); // directory never created
     } finally {
       await clamd.close();
     }

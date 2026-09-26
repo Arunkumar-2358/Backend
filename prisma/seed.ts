@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { prisma } from "@/lib/db";
 import { emailFor, seedCore } from "@/modules/seed/core";
 import { seedDemo } from "@/modules/seed/demo";
@@ -22,7 +23,14 @@ async function main() {
     const fresh = new Set(created.map((u) => u.email));
     console.log("✔ core seed: teams, users, routing rules, templates, presets, holidays, KPI targets, scorecard");
     console.log("Initial passwords for NEW accounts (shown once; existing accounts unchanged). Ask users to change them from Profile:");
-    for (const [email, pw] of issued) if (fresh.has(email)) console.log(`  ${email}  ${pw}`);
+    const out = issued.filter(([email]) => fresh.has(email));
+    if (process.stdout.isTTY) for (const [email, pw] of out) console.log(`  ${email}  ${pw}`);
+    else if (out.length) {
+      // Non-interactive runs (CI/CD, platform release tasks) keep stdout: write an owner-only file instead.
+      const file = `seed-credentials-${Date.now()}.txt`;
+      writeFileSync(file, out.map(([e, p]) => `${e}  ${p}`).join("\n") + "\n", { mode: 0o600, flag: "wx" });
+      console.log(`  written to ${file} (mode 0600) — distribute, then delete it`);
+    }
     console.log("• demo data is never seeded in production");
     return;
   }

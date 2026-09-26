@@ -70,9 +70,11 @@ export class FilesController {
 
     let kind: string | undefined;
     let file: { name: string; type: string; data: Buffer } | undefined;
-    for await (const part of req.parts()) {
-      if (part.type === "field" && part.fieldname === "kind") kind = String(part.value);
-      if (part.type === "file" && part.fieldname === "file") file = { name: part.filename, type: part.mimetype, data: await part.toBuffer() };
+    for await (const part of req.parts({ limits: { fileSize: MAX_VIDEO_BYTES, files: 1 } })) {
+      if (part.type === "field") {
+        if (part.fieldname === "kind") kind = String(part.value);
+      } else if (part.fieldname === "file" && !file) file = { name: part.filename, type: part.mimetype, data: await part.toBuffer() };
+      else part.file.resume(); // drain parts we do not use, or the request never completes
     }
     if (!file || file.data.length === 0) throw new ValidationError("Choose a file");
 

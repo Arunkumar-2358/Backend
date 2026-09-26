@@ -119,7 +119,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
   /** Daily 03:00 IST: delete auth sessions that expired / were revoked more than 30 days ago. */
   async purge_auth_sessions(_job, db) {
-    const { count } = await purgeDeadSessions();
+    const { count } = await purgeDeadSessions(30, db);
     await scheduleJob("purge_auth_sessions", new Date(startOfIstDay(now()).getTime() + DAY + 3 * HOUR), {}, "purge_auth_sessions", db);
     return `${count} sessions purged`;
   },

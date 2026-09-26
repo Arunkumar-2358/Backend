@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { setClock } from "@/lib/clock";
 import { DEV_PASSWORD, emailFor } from "@/modules/seed/core";
 import { REFRESH_REUSE_GRACE_MS } from "@/modules/auth/sessions";
+import { LOGIN_PER_IP } from "@/platform/guards";
 import { resetDb } from "../helpers";
 import { call } from "./client";
 
@@ -126,5 +127,16 @@ describe("HTTP: refresh tokens", () => {
     for (let i = 0; i < 10; i++) await hits("203.0.113.7");
     expect((await hits("203.0.113.7")).statusCode).toBe(429);
     expect((await hits("203.0.113.8")).statusCode).toBe(401);
+  });
+
+  it("caps login attempts per IP across all emails, so rotating accounts does not bypass the limit", async () => {
+    const tryEmail = (i: number) => call({ method: "POST", url: "/v1/auth/login", payload: { email: `nobody${i}@nextenti.ai`, password: "x" }, headers: { "x-forwarded-for": "198.51.100.9" } });
+    const codes: number[] = [];
+    for (let i = 0; i < LOGIN_PER_IP.limit + 2; i++) codes.push((await tryEmail(i)).statusCode);
+    expect(codes.slice(0, LOGIN_PER_IP.limit).every((c) => c === 401)).toBe(true);
+    expect(codes.at(-1)).toBe(429);
+    // Another client is unaffected.
+    const other = await call({ method: "POST", url: "/v1/auth/login", payload: { email: "nobody@nextenti.ai", password: "x" }, headers: { "x-forwarded-for": "198.51.100.10" } });
+    expect(other.statusCode).toBe(401);
   });
 });

@@ -77,9 +77,11 @@ export class PostmarkAdapter implements MessagingAdapter {
       throw new Error(`Postmark request failed (${(e as Error).name === "TimeoutError" ? "timeout" : (e as Error).name})`);
     }
     // Postmark's error "Message" can echo the recipient address, so only the numeric ErrorCode is surfaced.
-    const json = (await res.json().catch(() => ({}))) as { MessageID?: string; ErrorCode?: number };
-    if (!res.ok || (json.ErrorCode ?? 0) !== 0) throw new Error(`Postmark ${res.status}${json.ErrorCode ? ` (ErrorCode ${json.ErrorCode})` : ""}`);
-    return { providerRef: json.MessageID ?? "unknown" };
+    const json = (await res.json().catch(() => null)) as { MessageID?: unknown; ErrorCode?: number } | null;
+    if (!res.ok || (json?.ErrorCode ?? 0) !== 0) throw new Error(`Postmark ${res.status}${json?.ErrorCode ? ` (ErrorCode ${json.ErrorCode})` : ""}`);
+    // A 2xx we cannot confirm must not be recorded as SENT.
+    if (typeof json?.MessageID !== "string" || !json.MessageID) throw new Error(`Postmark ${res.status} (no MessageID in response)`);
+    return { providerRef: json.MessageID };
   }
 }
 

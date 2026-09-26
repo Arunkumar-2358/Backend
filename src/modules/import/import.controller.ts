@@ -40,11 +40,10 @@ export class ImportsController {
     if (!req.isMultipart()) throw new ValidationError("Expected multipart/form-data");
     const fields: Record<string, string> = {};
     let file: { name: string; data: Buffer } | undefined;
-    for await (const part of req.parts()) {
-      if (part.type === "file") {
-        const data = await part.toBuffer();
-        if (part.fieldname === "file") file = { name: part.filename, data };
-      } else fields[part.fieldname] = String(part.value);
+    for await (const part of req.parts({ limits: { fileSize: MAX_IMPORT_BYTES + 1, files: 1 } })) {
+      if (part.type !== "file") fields[part.fieldname] = String(part.value);
+      else if (part.fieldname === "file" && !file) file = { name: part.filename, data: await part.toBuffer() };
+      else part.file.resume(); // drain parts we do not use, without buffering them
     }
     if (!file || file.data.length === 0) throw new ValidationError("Choose an .xlsx or .csv file to upload");
     if (file.data.length > MAX_IMPORT_BYTES) throw new ValidationError("File is larger than 25 MB — split it into smaller files");

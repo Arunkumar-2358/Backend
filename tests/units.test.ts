@@ -100,3 +100,14 @@ describe("scorecard weights", () => {
     expect(validateWeights([{ name: "A", weightPct: 100 }, { name: "B", weightPct: 0 }]).join()).toMatch(/greater than 0/);
   });
 });
+
+import { maskPii, maskPiiDeep } from "@/lib/pii-scrub";
+
+describe("PII scrubbing for error reports", () => {
+  it("masks mobiles and emails in free text, leaving ids and dates alone", () => {
+    expect(maskPii("Invalid mobile 9876543210 for priya.s@example.com")).toBe("Invalid mobile [mobile] for [email]");
+    expect(maskPii("dup of +91 98765-43210 / 098765 43210")).toBe("dup of [mobile] / [mobile]");
+    expect(maskPii("lead cmuhx123 on 2026-09-26, VAC00012")).toBe("lead cmuhx123 on 2026-09-26, VAC00012");
+    expect(maskPiiDeep({ a: ["x@y.io"], b: { c: "9123456789" }, n: 5 })).toEqual({ a: ["[email]"], b: { c: "[mobile]" }, n: 5 });
+  });
+});

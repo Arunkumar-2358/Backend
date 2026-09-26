@@ -115,7 +115,7 @@ export async function familyOf(token: string): Promise<string | null> {
 }
 
 /** Housekeeping: drop rows that can never be used again (run daily by the scheduler). */
-export async function purgeDeadSessions(olderThanDays = 30) {
+export async function purgeDeadSessions(olderThanDays = 30, db: Tx = prisma) {
   const cutoff = new Date(now().getTime() - olderThanDays * DAY);
-  return prisma.authSession.deleteMany({ where: { OR: [{ absoluteExpiresAt: { lt: cutoff } }, { revokedAt: { lt: cutoff } }] } });
+  return db.authSession.deleteMany({ where: { OR: [{ absoluteExpiresAt: { lt: cutoff } }, { revokedAt: { lt: cutoff } }] } });
 }

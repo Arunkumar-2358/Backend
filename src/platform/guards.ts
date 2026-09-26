@@ -1,5 +1,8 @@
-import { Injectable, type CanActivate, type ExecutionContext } from "@nestjs/common";
-import { ThrottlerGuard } from "@nestjs/throttler";
+import { Injectable, Logger, type CanActivate, type ExecutionContext } from "@nestjs/common";
+
+/** Failed-or-not login attempts per IP across all emails (an office NAT stays well under this). */
+export const LOGIN_PER_IP = { limit: 30, ttlMs: 60_000 };
+import { ThrottlerException, ThrottlerGuard } from "@nestjs/throttler";
 import { Reflector } from "@nestjs/core";
 import { Inject } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
@@ -54,6 +57,31 @@ export class ApiAuthGuard implements CanActivate {
  */
 @Injectable()
 export class ApiThrottlerGuard extends ThrottlerGuard {
+  private readonly log = new Logger("RateLimit");
+
+  /**
+   * Fails OPEN if the rate-limit store (Redis) is unavailable: throttling protects the service, and
+   * refusing every request during a Redis outage would be a worse outage. Logged loudly.
+   */
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    try {
+      const ok = await super.canActivate(ctx);
+      const req = ctx.switchToHttp().getRequest<FastifyRequest>();
+      if (ok && req.url.startsWith("/v1/auth/login")) await this.loginPerIp(req);
+      return ok;
+    } catch (e) {
+      if (e instanceof ThrottlerException) throw e;
+      this.log.error(`rate-limit store unavailable, allowing request: ${(e as Error).message}`);
+      return true;
+    }
+  }
+
+  /** Aggregate cap across all emails from one IP, so rotating emails cannot bypass the per-account limit. */
+  private async loginPerIp(req: FastifyRequest) {
+    const r = await this.storageService.increment(`login-ip:${req.ip}`, LOGIN_PER_IP.ttlMs, LOGIN_PER_IP.limit, LOGIN_PER_IP.ttlMs, "login-ip");
+    if (r.totalHits > LOGIN_PER_IP.limit) throw new ThrottlerException();
+  }
+
   protected async getTracker(req: Record<string, unknown>): Promise<string> {
     const r = req as unknown as FastifyRequest<{ Body: { email?: unknown } }>;
     if (r.url.startsWith("/v1/auth/login") && typeof r.body?.email === "string") return `${r.ip}:${r.body.email.trim().toLowerCase()}`;
