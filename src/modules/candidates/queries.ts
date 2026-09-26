@@ -7,7 +7,7 @@ import { maskMobile } from "@contracts/shared/phone";
 import { NON_NT_SOURCES } from "@contracts/shared/fields";
 import { PIPELINE, allowedTargets, ruleFor } from "@/modules/lifecycle/rules";
 import { ForbiddenError, STAGE_OWNER_TEAMS, canEditLead, hasRole, isAdmin, isStageLeader, isStageTeamMember, leadScope, type Actor } from "@/lib/rbac";
-import { notFound } from "@/plugins/errors";
+import { notFound } from "@/lib/http-errors";
 import { leadSearchWhere } from "@/modules/search/service";
 import { decryptCandidate, logPiiView } from "./service";
 import { profileChecklist } from "@/modules/scrutiny/service";

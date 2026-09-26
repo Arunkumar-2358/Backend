@@ -9,6 +9,8 @@ export type AuditAction =
   | "REASSIGN"
   | "VIEW_PII"
   | "LOGIN"
+  | "LOGIN_FAILED"
+  | "REFRESH_REUSE"
   | "IMPORT"
   | "CONTACT_LOGGED"
   | "MESSAGE_SENT"

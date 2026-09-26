@@ -168,6 +168,10 @@ enum TaskStatus {
 
 enum JobStatus {
   PENDING
+  /// Handed to BullMQ by the dispatcher; the row stays the source of truth if Redis is lost.
+  QUEUED
+  /// Claimed by a runner; guards against two runners executing the same job.
+  RUNNING
   DONE
   FAILED
   CANCELLED
@@ -281,6 +285,7 @@ model User {
   vacanciesSourcing Vacancy[]         @relation("VacancySourcer")
   notifications     Notification[]
   pushSubscriptions PushSubscription[]
+  authSessions      AuthSession[]
 
   @@map("users")
 }
@@ -524,6 +529,7 @@ model ScheduledJob {
   lastError String?
   dedupeKey String?   @unique
   createdAt DateTime  @default(now())
+  queuedAt  DateTime?
   doneAt    DateTime?
 
   @@index([status, runAt])
@@ -998,4 +1004,27 @@ model PushSubscription {
 
   @@index([userId])
   @@map("push_subscriptions")
+}
+
+/// One signed-in device. The refresh token is "<id>.<secret>"; only a SHA-256 of the secret is stored.
+/// Every refresh rotates the token into a new row of the same family; presenting an already-rotated
+/// token outside the grace window is treated as theft and revokes the whole family.
+model AuthSession {
+  id                String    @id @default(cuid())
+  userId            String
+  familyId          String
+  tokenHash         String
+  expiresAt         DateTime
+  absoluteExpiresAt DateTime
+  rotatedAt         DateTime?
+  revokedAt         DateTime?
+  revokedReason     String?
+  userAgent         String?
+  ip                String?
+  createdAt         DateTime  @default(now())
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("auth_sessions")
 }

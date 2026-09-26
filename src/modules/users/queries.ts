@@ -2,7 +2,7 @@ import type { ProfileView } from "@contracts";
 import { prisma } from "@/lib/db";
 import { now } from "@/lib/clock";
 import { periodRange } from "@contracts/shared/dates";
-import type { UserActor } from "@/http/route";
+import type { UserActor } from "@/platform/endpoint";
 
 /** The signed-in user's account, team roles and this IST week at a glance. */
 export async function getProfile(actor: UserActor): Promise<ProfileView> {

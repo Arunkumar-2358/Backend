@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { prisma } from "@/lib/db";
+import { setClock } from "@/lib/clock";
 import { DEV_PASSWORD, emailFor } from "@/modules/seed/core";
+import { REFRESH_REUSE_GRACE_MS } from "@/modules/auth/sessions";
+import { LOGIN_PER_IP } from "@/platform/guards";
 import { resetDb } from "../helpers";
 import { call } from "./client";
 
@@ -11,7 +15,8 @@ describe("HTTP: auth", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.user.email).toBe(emailFor("jennifer"));
-    expect(body.expiresIn).toBe(12 * 3600);
+    expect(body.expiresIn).toBe(900);
+    expect(body.refreshToken).toMatch(/^\w+\.[\w-]{40,}$/);
     const shell = await call({ method: "GET", url: "/v1/me/shell", headers: { authorization: `Bearer ${body.token}` } });
     expect(shell.statusCode).toBe(200);
     expect(shell.json().user.name).toBe(body.user.name);
@@ -42,5 +47,96 @@ describe("HTTP: auth", () => {
     const res = await call({ method: "GET", url: "/v1/nope", as: "admin" });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("NOT_FOUND");
+  });
+});
+
+const loginAs = async (key: string) => (await call({ method: "POST", url: "/v1/auth/login", payload: { email: emailFor(key), password: DEV_PASSWORD } })).json();
+const refreshWith = (refreshToken: string) => call({ method: "POST", url: "/v1/auth/refresh", payload: { refreshToken } });
+const shellWith = (token: string) => call({ method: "GET", url: "/v1/me/shell", headers: { authorization: `Bearer ${token}` } });
+
+describe("HTTP: refresh tokens", () => {
+  afterEach(() => setClock(null));
+
+  it("rotates: each refresh returns a new pair and the new access token works", async () => {
+    const first = await loginAs("jennifer");
+    const res = await refreshWith(first.refreshToken);
+    expect(res.statusCode).toBe(200);
+    const next = res.json();
+    expect(next.refreshToken).not.toBe(first.refreshToken);
+    expect((await shellWith(next.token)).statusCode).toBe(200);
+  });
+
+  it("treats reuse of a rotated token as theft and signs the whole session out", async () => {
+    const first = await loginAs("jennifer");
+    const second = (await refreshWith(first.refreshToken)).json();
+    setClock(new Date(Date.now() + REFRESH_REUSE_GRACE_MS + 1000));
+    expect((await refreshWith(first.refreshToken)).statusCode).toBe(401);
+    // The attacker's replay also kills the legitimate chain and its access token.
+    expect((await refreshWith(second.refreshToken)).statusCode).toBe(401);
+    expect((await shellWith(second.token)).statusCode).toBe(401);
+    expect(await prisma.auditLog.count({ where: { action: "REFRESH_REUSE" } })).toBeGreaterThan(0);
+  });
+
+  it("tolerates a concurrent refresh inside the grace window (several tabs)", async () => {
+    const first = await loginAs("jennifer");
+    const [a, b] = await Promise.all([refreshWith(first.refreshToken), refreshWith(first.refreshToken)]);
+    expect([a.statusCode, b.statusCode]).toEqual([200, 200]);
+  });
+
+  it("rejects unknown, tampered and expired refresh tokens", async () => {
+    const first = await loginAs("jennifer");
+    expect((await refreshWith("nope.nope-nope-nope")).statusCode).toBe(401);
+    expect((await refreshWith(first.refreshToken.slice(0, -2) + "xx")).statusCode).toBe(401);
+    setClock(new Date(Date.now() + 8 * 86_400_000));
+    expect((await refreshWith(first.refreshToken)).statusCode).toBe(401);
+  });
+
+  it("logout revokes the session: its access and refresh tokens stop working", async () => {
+    const s = await loginAs("jennifer");
+    const out = await call({ method: "POST", url: "/v1/auth/logout", payload: { refreshToken: s.refreshToken } });
+    expect(out.statusCode).toBe(200);
+    expect((await shellWith(s.token)).statusCode).toBe(401);
+    expect((await refreshWith(s.refreshToken)).statusCode).toBe(401);
+  });
+
+  it("logout-all signs out other devices and can keep the current one", async () => {
+    const laptop = await loginAs("sarala");
+    const phone = await loginAs("sarala");
+    await refreshWith(phone.refreshToken); // rotation adds a row, not a device
+    const res = await call({ method: "POST", url: "/v1/auth/logout-all", payload: { keepCurrent: true }, headers: { authorization: `Bearer ${laptop.token}` } });
+    expect(res.json().revoked).toBe(1);
+    expect((await shellWith(laptop.token)).statusCode).toBe(200);
+    expect((await shellWith(phone.token)).statusCode).toBe(401);
+  });
+
+  it("a deactivated user is locked out at the next request, not at token expiry", async () => {
+    const s = await loginAs("bhavani");
+    await prisma.user.update({ where: { email: emailFor("bhavani") }, data: { active: false } });
+    expect((await shellWith(s.token)).statusCode).toBe(401);
+    expect((await refreshWith(s.refreshToken)).statusCode).toBe(401);
+    await prisma.user.update({ where: { email: emailFor("bhavani") }, data: { active: true } });
+  });
+
+  it("rate-limits password guessing on login", async () => {
+    const tries = await Promise.all(Array.from({ length: 12 }, () => call({ method: "POST", url: "/v1/auth/login", payload: { email: emailFor("harsha"), password: "wrong" } })));
+    expect(tries.some((r) => r.statusCode === 429 && r.json().error.code === "RATE_LIMITED")).toBe(true);
+  });
+
+  it("rate-limits per real client IP behind the web server, not per web server", async () => {
+    const hits = (ip: string) => call({ method: "POST", url: "/v1/auth/login", payload: { email: emailFor("sanjay"), password: "wrong" }, headers: { "x-forwarded-for": ip } });
+    for (let i = 0; i < 10; i++) await hits("203.0.113.7");
+    expect((await hits("203.0.113.7")).statusCode).toBe(429);
+    expect((await hits("203.0.113.8")).statusCode).toBe(401);
+  });
+
+  it("caps login attempts per IP across all emails, so rotating accounts does not bypass the limit", async () => {
+    const tryEmail = (i: number) => call({ method: "POST", url: "/v1/auth/login", payload: { email: `nobody${i}@nextenti.ai`, password: "x" }, headers: { "x-forwarded-for": "198.51.100.9" } });
+    const codes: number[] = [];
+    for (let i = 0; i < LOGIN_PER_IP.limit + 2; i++) codes.push((await tryEmail(i)).statusCode);
+    expect(codes.slice(0, LOGIN_PER_IP.limit).every((c) => c === 401)).toBe(true);
+    expect(codes.at(-1)).toBe(429);
+    // Another client is unaffected.
+    const other = await call({ method: "POST", url: "/v1/auth/login", payload: { email: "nobody@nextenti.ai", password: "x" }, headers: { "x-forwarded-for": "198.51.100.10" } });
+    expect(other.statusCode).toBe(401);
   });
 });

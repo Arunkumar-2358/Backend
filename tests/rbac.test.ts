@@ -18,9 +18,10 @@ describe("roles, login and menus", () => {
   });
 
   it("session tokens round-trip and reject tampering", async () => {
-    const t = await signSession({ sub: "u1", name: "X", roles: ["ta_lead"] });
-    expect((await verifySession(t))?.roles).toEqual(["ta_lead"]);
+    const t = await signSession({ sub: "u1", name: "X", roles: ["ta_lead"], sid: "s1" });
+    expect(await verifySession(t)).toMatchObject({ sub: "u1", roles: ["ta_lead"], sid: "s1" });
     expect(await verifySession(t.slice(0, -2) + "xx")).toBeNull();
+    expect(await verifySession(await signSession({ sub: "u1", name: "X", roles: [], sid: "s1" }, -10))).toBeNull();
   });
 
   it("agents only see their own leads; leaders see their stages; coordinator sees all", async () => {

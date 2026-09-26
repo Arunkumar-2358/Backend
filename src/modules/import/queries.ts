@@ -2,7 +2,7 @@ import type { ImportRowStatus, Prisma } from "@prisma/client";
 import type { ImportHistory, ImportMappingStep, ImportReport } from "@contracts";
 import { prisma } from "@/lib/db";
 import { ValidationError } from "@/lib/errors";
-import { notFound } from "@/plugins/errors";
+import { notFound } from "@/lib/http-errors";
 import { storage } from "@/modules/storage";
 import { PRESETS, norm } from "@contracts/shared/import-presets";
 import { TARGET_KEYS, cellText, isImportKey } from "@contracts/shared/d-import";

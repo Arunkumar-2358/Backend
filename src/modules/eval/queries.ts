@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { formatDate } from "@contracts/shared/dates";
 import { ForbiddenError, hasRole, leadScope, type Actor } from "@/lib/rbac";
 import { leadSearchWhere } from "@/modules/search/service";
-import { notFound } from "@/plugins/errors";
+import { notFound } from "@/lib/http-errors";
 import { evaluationResults } from "./service";
 
 const PAGE_SIZE = 25;

@@ -32,7 +32,7 @@ export type TaskType = "FOLLOW_UP" | "RECALL" | "COLLECT_DETAILS" | "AVAILABILIT
 
 export type TaskStatus = "OPEN" | "DONE" | "CANCELLED";
 
-export type JobStatus = "PENDING" | "DONE" | "FAILED" | "CANCELLED";
+export type JobStatus = "PENDING" | "QUEUED" | "RUNNING" | "DONE" | "FAILED" | "CANCELLED";
 
 export type ClientOrgType = "GENERAL" | "EXISTING" | "FREE_TRIAL";
 
@@ -238,6 +238,7 @@ export interface ScheduledJob {
   lastError: string | null;
   dedupeKey: string | null;
   createdAt: Date;
+  queuedAt: Date | null;
   doneAt: Date | null;
 }
 
@@ -563,4 +564,24 @@ export interface PushSubscription {
   userAgent: string | null;
   createdAt: Date;
   lastSeenAt: Date;
+}
+
+/**
+ * One signed-in device. The refresh token is "<id>.<secret>"; only a SHA-256 of the secret is stored.
+ * Every refresh rotates the token into a new row of the same family; presenting an already-rotated
+ * token outside the grace window is treated as theft and revokes the whole family.
+ */
+export interface AuthSession {
+  id: string;
+  userId: string;
+  familyId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  absoluteExpiresAt: Date;
+  rotatedAt: Date | null;
+  revokedAt: Date | null;
+  revokedReason: string | null;
+  userAgent: string | null;
+  ip: string | null;
+  createdAt: Date;
 }

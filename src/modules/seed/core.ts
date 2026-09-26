@@ -88,13 +88,18 @@ export const HOLIDAYS_2026_27 = [
   ["2027-01-26", "Republic Day"],
 ] as const;
 
-export async function seedCore(db: PrismaClient, opts: { fastHash?: boolean } = {}) {
-  const hash = await bcrypt.hash(DEV_PASSWORD, opts.fastHash ? 4 : 10);
+/**
+ * `passwordFor` gives each NEW user their initial password (existing users' passwords are never touched).
+ * Defaults to the shared DEV_PASSWORD, which is public in this repo — production must pass a generator.
+ */
+export async function seedCore(db: PrismaClient, opts: { fastHash?: boolean; passwordFor?: (key: string) => string } = {}) {
+  const devHash = await bcrypt.hash(DEV_PASSWORD, opts.fastHash ? 4 : 10);
   const teams: Record<string, string> = {};
   for (const t of TEAMS) teams[t.code] = (await db.team.upsert({ where: { code: t.code }, create: t, update: { name: t.name } })).id;
 
   const users: Record<string, string> = {};
   for (const u of USERS) {
+    const hash = opts.passwordFor ? await bcrypt.hash(opts.passwordFor(u.key), 10) : devHash;
     const user = await db.user.upsert({ where: { email: emailFor(u.key) }, create: { email: emailFor(u.key), name: u.name, passwordHash: hash }, update: { name: u.name } });
     users[u.key] = user.id;
     for (const g of u.grants) {

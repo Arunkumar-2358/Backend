@@ -28,6 +28,21 @@ describe("HTTP: integrations", () => {
     expect(await prisma.missedCall.count()).toBe(2);
   });
 
+  it("tolerates IVR quirks: empty JSON bodies, numeric JSON fields", async () => {
+    const token = process.env.TELEPHONY_WEBHOOK_TOKEN;
+    const empty = await call({ method: "POST", url: `/v1/telephony/missed-call?token=${token}&From=${nextMobile()}`, payload: "", headers: { "content-type": "application/json" } });
+    expect(empty.statusCode).toBe(200);
+    const numeric = await call({ method: "POST", url: `/v1/telephony/missed-call?token=${token}`, payload: `{"From": ${nextMobile()}}`, headers: { "content-type": "application/json" } });
+    expect(numeric.statusCode).toBe(200);
+    expect(await prisma.missedCall.count()).toBe(2);
+  });
+
+  it("rejects prototype-poisoning JSON before any handler runs", async () => {
+    const res = await call({ method: "POST", url: "/v1/auth/login", payload: '{"email":"a@b.co","password":"x","__proto__":{"admin":true}}', headers: { "content-type": "application/json" } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("VALIDATION");
+  });
+
   it("runs due jobs only with the cron secret", async () => {
     expect((await call({ method: "POST", url: "/v1/cron/run-jobs" })).statusCode).toBe(401);
     const res = await call({ method: "POST", url: "/v1/cron/run-jobs", headers: { "x-cron-secret": process.env.CRON_SECRET } });

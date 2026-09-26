@@ -1,0 +1,106 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit review configuration — Nextenti Recruit CRM API.
+# This service holds candidate PII (mobiles, emails, CVs) under India's DPDP Act,
+# so reviews are tuned to catch security, privacy and workflow-integrity bugs first.
+language: en-US
+tone_instructions: "Be direct and specific. Lead with bugs and security issues; skip praise and style nits the linters already catch."
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  sequence_diagrams: true
+  poem: false
+  changed_files_summary: true
+  suggested_labels: true
+  auto_apply_labels: false
+  suggested_reviewers: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: ["main", "release/.*"]
+    ignore_title_keywords: ["WIP", "DO NOT REVIEW"]
+  path_filters:
+    - "!**/node_modules/**"
+    - "!dist/**"
+    - "!coverage/**"
+    - "!storage/**"
+    - "!package-lock.json"
+    - "!openapi.json"
+    - "!contracts/models.ts"
+  path_instructions:
+    - path: "**/*.ts"
+      instructions: |
+        Security and correctness review for a NestJS + Prisma API holding candidate PII.
+        Flag as critical:
+        - Any endpoint missing authorization: every route is authenticated by the global ApiAuthGuard unless it
+          declares `auth: "public"`. Any new public route must justify it (webhook signature, token, or cron secret).
+        - Data access that bypasses row-level scoping: lead/candidate queries for users must be constrained with
+          `leadScope(actor)` / `canEditLead` (src/lib/rbac.ts). Agents see their own leads; leaders see their team.
+        - Plaintext PII: mobile/alternate mobile/email must go through src/lib/crypto.ts (AES-256-GCM + HMAC blind
+          index). Never log, return in errors, put in URLs/query strings, or send to Sentry/metrics.
+        - PII reads or exports without an `audit(...)` call (VIEW_PII / EXPORT).
+        - `$queryRawUnsafe` / `$executeRawUnsafe` with interpolated input (SQL injection). Tagged `$queryRaw` is fine.
+        - Secrets compared with `===` instead of `timingSafeEqual`.
+        - Request input not validated by a zod schema on the @Endpoint / @RawEndpoint declaration.
+    - path: "src/modules/lifecycle/**"
+      instructions: |
+        `transitionLead` is the ONLY way a lead's stage may change. Flag any code elsewhere that writes
+        `candidate.stage` directly. Every transition must append lead_stage_history, write audit_log and run its
+        side effects in the same transaction. Gates (10-digit mobile, no duplicate, SOP fields, Team 2 leader
+        sign-off, consent before CV) must never be weakened without a DECISIONS.md entry.
+    - path: "src/modules/jobs/**"
+      instructions: |
+        scheduled_jobs is a transactional outbox: jobs must be written in the same Prisma transaction as the
+        business change (pass `db`/`tx`). Execution must stay idempotent and claim-before-run so two runners
+        (worker + cron) never double-send reminders. Check retry, backoff and FAILED handling.
+    - path: "src/modules/auth/**"
+      instructions: |
+        Refresh tokens are single-use and rotated; reuse outside the grace window must revoke the family.
+        Only hashes of refresh secrets may be stored. Check expiry (idle + absolute), revocation on password
+        change / deactivation, and that access tokens are always checked against a live session.
+    - path: "src/modules/storage/**"
+      instructions: |
+        Every upload must pass content sniffing and (when configured) ClamAV scanning before a key is returned;
+        scanner outages must fail closed. Keys must never allow path traversal. Objects are private.
+    - path: "src/kpi/**"
+      instructions: |
+        KPIs must be derived from events (stage history, contact attempts, submissions), never from mutable
+        current state alone. Any formula change needs a matching fixture update in tests/kpi.test.ts.
+    - path: "prisma/migrations/**"
+      instructions: |
+        Production runs `prisma migrate deploy` with zero downtime. Flag destructive or locking changes
+        (DROP/RENAME column, NOT NULL without default on a large table, type changes, non-concurrent index on a
+        hot table) and ask for an expand/contract plan. Never edit an already-applied migration.
+    - path: "tests/**"
+      instructions: "Tests run against a real Postgres. Check they assert behaviour (status codes, audit rows, gates), not implementation details, and that new endpoints have RBAC denial tests."
+  tools:
+    eslint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    semgrep:
+      enabled: true
+    hadolint:
+      enabled: true
+    yamllint:
+      enabled: true
+    actionlint:
+      enabled: true
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: local
+  pull_requests:
+    scope: local

@@ -6,7 +6,7 @@ import { getAllSettings } from "@/lib/settings";
 import { hasRole, type Actor } from "@/lib/rbac";
 import { MAIN_CATEGORIES } from "@contracts/shared/fields";
 import { vacancySearchWhere } from "@/modules/search/service";
-import { notFound } from "@/plugins/errors";
+import { notFound } from "@/lib/http-errors";
 import { matchesFor, sourcingStats } from "./service";
 
 const PAGE_SIZE = 25;

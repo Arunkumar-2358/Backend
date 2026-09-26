@@ -1,10 +1,10 @@
-// Writes openapi.json from the registered routes. `--check` fails if the committed file is stale.
+// Writes openapi.json from the declared endpoints. `--check` fails if the committed file is stale.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { buildApp } from "@/app";
+import { buildOpenApi } from "@/platform/openapi";
 
-const app = await buildApp({ docs: true });
-await app.ready();
-const spec = JSON.stringify(app.swagger(), null, 2) + "\n";
+const app = await buildApp({ docs: false });
+const spec = JSON.stringify(buildOpenApi(), null, 2) + "\n";
 await app.close();
 
 const file = "openapi.json";

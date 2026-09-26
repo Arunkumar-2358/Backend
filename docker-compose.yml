@@ -1,4 +1,27 @@
-# Local stack: Postgres + API + worker.  `docker compose up -d db` for just the database.
+# Ports bind to 127.0.0.1 only; MinIO credentials can be overridden in .env (local use only).
+# Full backend stack, mirroring production: Postgres, Redis (BullMQ + rate limits), MinIO (S3), ClamAV.
+#   docker compose up -d db redis minio clamav      # just the dependencies, run the API with `npm run dev`
+#   docker compose up --build                       # everything, including migrate → api + worker
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: postgresql://nextenti:nextenti@db:5432/recruit_crm?schema=public
+    REDIS_URL: redis://redis:6379
+    STORAGE_DRIVER: s3
+    S3_BUCKET: recruit-crm
+    S3_ENDPOINT: http://minio:9000
+    S3_FORCE_PATH_STYLE: "true"
+    S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-nextenti}
+    S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-local-only-minio-password}
+    S3_SERVER_SIDE_ENCRYPTION: "none"   # local MinIO has no KMS; AWS keeps AES256
+    CLAMAV_HOST: clamav
+  depends_on:
+    migrate: { condition: service_completed_successfully }
+    redis: { condition: service_healthy }
+    bucket: { condition: service_completed_successfully }
+
 services:
   db:
     image: postgres:16-alpine
@@ -6,11 +29,51 @@ services:
       POSTGRES_USER: nextenti
       POSTGRES_PASSWORD: nextenti
       POSTGRES_DB: recruit_crm
-    ports: ["5433:5432"]
+    ports: ["127.0.0.1:5433:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nextenti"]
       interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # AOF persistence: the outbox in Postgres is the source of truth, but keep queue state across restarts.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  minio:
+    image: cgr.dev/chainguard/minio:latest   # minio/minio is no longer published on Docker Hub
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nextenti}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local-only-minio-password}
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: [miniodata:/data]
+    # The image has no shell, so there is no healthcheck; `bucket` retries until MinIO answers.
+
+  # Creates the private bucket once MinIO is up (new buckets are private by default).
+  bucket:
+    image: cgr.dev/chainguard/minio-client:latest
+    depends_on: [minio]
+    environment:
+      MC_HOST_local: http://${MINIO_ROOT_USER:-nextenti}:${MINIO_ROOT_PASSWORD:-local-only-minio-password}@minio:9000
+    command: ["mb", "--ignore-existing", "local/recruit-crm"]
+    restart: on-failure
+
+  clamav:
+    image: clamav/clamav:stable
+    ports: ["127.0.0.1:3310:3310"]
+    volumes: [clamdb:/var/lib/clamav]
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      start_period: 180s
       retries: 10
 
   migrate:
@@ -23,27 +86,15 @@ services:
     restart: "no"
 
   api:
-    build: .
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://nextenti:nextenti@db:5432/recruit_crm?schema=public
-      NODE_ENV: production
-    ports: ["4000:4000"]
-    depends_on:
-      migrate: { condition: service_completed_successfully }
-    volumes: [storage:/data/storage]
+    <<: *app
+    ports: ["127.0.0.1:4000:4000"]
 
   worker:
-    build: .
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://nextenti:nextenti@db:5432/recruit_crm?schema=public
-      NODE_ENV: production
-    depends_on:
-      migrate: { condition: service_completed_successfully }
-    volumes: [storage:/data/storage]
+    <<: *app
     command: ["node", "dist/worker.js"]
 
 volumes:
   pgdata:
-  storage:
+  redisdata:
+  miniodata:
+  clamdb:

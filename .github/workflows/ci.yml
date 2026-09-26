@@ -9,9 +9,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,13 +28,28 @@ jobs:
           --health-cmd "pg_isready -U ci"
           --health-interval 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/recruit_crm_test?schema=public
       TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/recruit_crm_test?schema=public
       SESSION_SECRET: ci-session-secret-ci-session-secret-00
       PII_ENCRYPTION_KEY: 3f1c9a7e5b2d4f6081a3c5e7f9b1d3a5c7e9f1b3d5a7c9e1f3b5d7a9c1e3f5a7
+      # Enables the BullMQ integration tests (rate limits stay in-memory under NODE_ENV=test).
+      REDIS_URL: redis://localhost:6379
+      # Enables the S3 storage tests against MinIO (started below).
+      S3_TEST_ENDPOINT: http://localhost:9000
     steps:
       - uses: actions/checkout@v4
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio12345 cgr.dev/chainguard/minio server /data
+          for i in $(seq 1 30); do curl -sf http://localhost:9000/minio/health/live && break; sleep 1; done
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -39,22 +58,47 @@ jobs:
       - run: npx prisma generate
       - name: Generated contract models are committed
         run: git diff --exit-code -- contracts/models.ts
+      - name: Migrations match the schema
+        run: |
+          PGPASSWORD=ci psql -h localhost -U ci -d recruit_crm_test -c "CREATE DATABASE recruit_crm_shadow"
+          npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "postgresql://ci:ci@localhost:5432/recruit_crm_shadow" --exit-code
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run openapi:check
       - run: npm test
       - run: npm run build
+      - name: Dependency audit (production, high+)
+        run: npm audit --omit=dev --audit-level=high
 
   docker:
     runs-on: ubuntu-latest
     needs: verify
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: .
+          load: true
           push: false
           tags: recruit-crm-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Image boots and refuses an unsafe production config
+        run: |
+          # Production without Redis/S3 must fail fast rather than start half-configured.
+          if docker run --rm -e NODE_ENV=production -e DATABASE_URL=postgresql://x:y@localhost:5432/db \
+               -e SESSION_SECRET=0123456789abcdef0123456789abcdef01 \
+               -e PII_ENCRYPTION_KEY=3f1c9a7e5b2d4f6081a3c5e7f9b1d3a5c7e9f1b3d5a7c9e1f3b5d7a9c1e3f5a7 \
+               recruit-crm-api:ci; then echo "expected startup to fail"; exit 1; fi
+      - name: Image serves /health
+        run: |
+          docker run -d --name api -p 4000:4000 -e NODE_ENV=development \
+            -e DATABASE_URL=postgresql://x:y@localhost:5432/db \
+            -e SESSION_SECRET=0123456789abcdef0123456789abcdef01 \
+            -e PII_ENCRYPTION_KEY=3f1c9a7e5b2d4f6081a3c5e7f9b1d3a5c7e9f1b3d5a7c9e1f3b5d7a9c1e3f5a7 \
+            recruit-crm-api:ci
+          for i in $(seq 1 30); do curl -sf http://localhost:4000/health && exit 0; sleep 1; done
+          docker logs api; exit 1

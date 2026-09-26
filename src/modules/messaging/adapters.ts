@@ -59,6 +59,32 @@ export class Msg91Adapter implements MessagingAdapter {
   }
 }
 
+/** Postmark transactional email (MESSAGING_PROVIDER=live plus POSTMARK_SERVER_TOKEN and EMAIL_FROM). */
+export class PostmarkAdapter implements MessagingAdapter {
+  readonly name = "postmark";
+  constructor(private serverToken: string, private from: string, private messageStream = "outbound") {}
+  async send(msg: OutboundMessage): Promise<SendResult> {
+    let res: Response;
+    try {
+      res = await fetch("https://api.postmarkapp.com/email", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json", "X-Postmark-Server-Token": this.serverToken },
+        body: JSON.stringify({ From: this.from, To: msg.to, Subject: msg.subject ?? "", TextBody: msg.body, MessageStream: this.messageStream }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (e) {
+      // Network failure or the 10s timeout. The name only — never the recipient or body.
+      throw new Error(`Postmark request failed (${(e as Error).name === "TimeoutError" ? "timeout" : (e as Error).name})`);
+    }
+    // Postmark's error "Message" can echo the recipient address, so only the numeric ErrorCode is surfaced.
+    const json = (await res.json().catch(() => null)) as { MessageID?: unknown; ErrorCode?: number } | null;
+    if (!res.ok || (json?.ErrorCode ?? 0) !== 0) throw new Error(`Postmark ${res.status}${json?.ErrorCode ? ` (ErrorCode ${json.ErrorCode})` : ""}`);
+    // A 2xx we cannot confirm must not be recorded as SENT.
+    if (typeof json?.MessageID !== "string" || !json.MessageID) throw new Error(`Postmark ${res.status} (no MessageID in response)`);
+    return { providerRef: json.MessageID };
+  }
+}
+
 let override: Partial<Record<Channel, MessagingAdapter>> | null = null;
 const consoleAdapter = new ConsoleAdapter();
 
@@ -68,7 +94,10 @@ export function setAdapters(a: Partial<Record<Channel, MessagingAdapter>> | null
 
 export function adapterFor(channel: Channel): MessagingAdapter {
   if (override?.[channel]) return override[channel]!;
+  // Real providers only under MESSAGING_PROVIDER=live, so staging can never message real candidates.
   if (process.env.MESSAGING_PROVIDER === "live") {
+    if (channel === "EMAIL" && process.env.POSTMARK_SERVER_TOKEN && process.env.EMAIL_FROM)
+      return new PostmarkAdapter(process.env.POSTMARK_SERVER_TOKEN, process.env.EMAIL_FROM);
     if (channel === "WHATSAPP" && process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID)
       return new WhatsAppCloudAdapter(process.env.WHATSAPP_TOKEN, process.env.WHATSAPP_PHONE_NUMBER_ID);
     if (channel === "SMS" && process.env.MSG91_AUTH_KEY) return new Msg91Adapter(process.env.MSG91_AUTH_KEY, process.env.MSG91_SENDER_ID ?? "NXTNTI");

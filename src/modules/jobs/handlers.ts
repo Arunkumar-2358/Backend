@@ -8,6 +8,7 @@ import { formatDateTime, istDateKey, startOfIstDay } from "@contracts/shared/dat
 import { ensureOpenTask, createTask } from "@/modules/tasks/service";
 import { sendTemplate } from "@/modules/messaging/service";
 import { notify } from "@/modules/notifications/service";
+import { purgeDeadSessions } from "@/modules/auth/sessions";
 import { scheduleJob } from "./queue";
 
 const sys = SYSTEM("scheduler");
@@ -115,5 +116,11 @@ export const HANDLERS: Record<string, Handler> = {
     const nextRun = new Date(startOfIstDay(now()).getTime() + DAY + 30 * 60_000);
     await scheduleJob("freeze_kpis", nextRun, {}, "freeze_kpis", db);
     return out;
+  },
+  /** Daily 03:00 IST: delete auth sessions that expired / were revoked more than 30 days ago. */
+  async purge_auth_sessions(_job, db) {
+    const { count } = await purgeDeadSessions(30, db);
+    await scheduleJob("purge_auth_sessions", new Date(startOfIstDay(now()).getTime() + DAY + 3 * HOUR), {}, "purge_auth_sessions", db);
+    return `${count} sessions purged`;
   },
 };
