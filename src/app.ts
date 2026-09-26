@@ -64,7 +64,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<NestFastifyAppl
     },
     // false: genReqId (above) validates the caller's x-request-id instead of Fastify trusting it verbatim.
     requestIdHeader: false,
-    trustProxy: true,
+    trustProxy: /^\d+$/.test(env.TRUST_PROXY) ? Number(env.TRUST_PROXY) : env.TRUST_PROXY.split(",").map((x) => x.trim()),
     bodyLimit: MAX_UPLOAD_BYTES,
   });
   fastify.addHook("onSend", async (req, reply) => {

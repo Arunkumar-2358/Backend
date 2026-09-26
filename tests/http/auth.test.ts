@@ -101,8 +101,9 @@ describe("HTTP: refresh tokens", () => {
   it("logout-all signs out other devices and can keep the current one", async () => {
     const laptop = await loginAs("sarala");
     const phone = await loginAs("sarala");
+    await refreshWith(phone.refreshToken); // rotation adds a row, not a device
     const res = await call({ method: "POST", url: "/v1/auth/logout-all", payload: { keepCurrent: true }, headers: { authorization: `Bearer ${laptop.token}` } });
-    expect(res.json().revoked).toBeGreaterThan(0);
+    expect(res.json().revoked).toBe(1);
     expect((await shellWith(laptop.token)).statusCode).toBe(200);
     expect((await shellWith(phone.token)).statusCode).toBe(401);
   });
@@ -118,5 +119,12 @@ describe("HTTP: refresh tokens", () => {
   it("rate-limits password guessing on login", async () => {
     const tries = await Promise.all(Array.from({ length: 12 }, () => call({ method: "POST", url: "/v1/auth/login", payload: { email: emailFor("harsha"), password: "wrong" } })));
     expect(tries.some((r) => r.statusCode === 429 && r.json().error.code === "RATE_LIMITED")).toBe(true);
+  });
+
+  it("rate-limits per real client IP behind the web server, not per web server", async () => {
+    const hits = (ip: string) => call({ method: "POST", url: "/v1/auth/login", payload: { email: emailFor("sanjay"), password: "wrong" }, headers: { "x-forwarded-for": ip } });
+    for (let i = 0; i < 10; i++) await hits("203.0.113.7");
+    expect((await hits("203.0.113.7")).statusCode).toBe(429);
+    expect((await hits("203.0.113.8")).statusCode).toBe(401);
   });
 });

@@ -98,11 +98,12 @@ export async function revokeFamily(familyId: string, reason: string, db: Tx = pr
 }
 
 /** Sign a user out everywhere (password change, deactivation, "log out all devices"). */
-export async function revokeUserSessions(userId: string, reason: string, opts: { exceptFamilyId?: string } = {}, db: Tx = prisma) {
-  return db.authSession.updateMany({
-    where: { userId, revokedAt: null, ...(opts.exceptFamilyId ? { NOT: { familyId: opts.exceptFamilyId } } : {}) },
-    data: { revokedAt: now(), revokedReason: reason },
-  });
+export async function revokeUserSessions(userId: string, reason: string, opts: { exceptFamilyId?: string } = {}, db: Tx = prisma): Promise<{ count: number }> {
+  const where = { userId, revokedAt: null, ...(opts.exceptFamilyId ? { NOT: { familyId: opts.exceptFamilyId } } : {}) };
+  // Count devices (session families), not rows: each refresh adds a row to its family.
+  const families = await db.authSession.findMany({ where: { ...where, absoluteExpiresAt: { gt: now() } }, distinct: ["familyId"], select: { familyId: true } });
+  await db.authSession.updateMany({ where, data: { revokedAt: now(), revokedReason: reason } });
+  return { count: families.length };
 }
 
 /** Family of a refresh token, when the token is well-formed and genuine (used by logout). */

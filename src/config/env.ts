@@ -10,6 +10,12 @@ const schema = z
     PORT: z.coerce.number().int().positive().default(4000),
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
     CORS_ORIGINS: z.string().default("http://localhost:3000"),
+    /**
+     * Which proxies may set X-Forwarded-For (client IP for rate limits and audit). Default: private-network
+     * hops only (the web server and load balancer inside the VPC), so public clients cannot spoof their IP.
+     * Accepts proxy-addr names/CIDRs ("loopback,10.0.0.0/8") or a hop count ("2").
+     */
+    TRUST_PROXY: z.string().default("loopback,linklocal,uniquelocal"),
 
     DATABASE_URL: z.string().url(),
     SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
