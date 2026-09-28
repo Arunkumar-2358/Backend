@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "@/lib/db";
-import { setClock, advanceClock, HOUR, DAY } from "@/lib/clock";
+import { setClock, advanceClock, now, HOUR, DAY } from "@/lib/clock";
 import { SYSTEM } from "@/lib/rbac";
 import { saveTemplate, createEvaluation, saveScores, evaluationResults, templateLeaves, evaluationWorkbook } from "@/modules/eval/service";
 import { raiseRedFlag, suggestCapa, implementCapa, verifyAndClose } from "@/modules/redflags/service";
@@ -76,11 +76,11 @@ describe("red flags / CAPA (M7)", () => {
     for (let i = 0; i < 10; i++) leads.push(await driveTo("VALIDATED", { mainCategory: "NURSE" }));
     const { logContact } = await import("@/modules/outreach/service");
     await logContact(await as("jennifer"), leads[0].id, { channel: "CALL", outcome: "ENROLLED" });
-    const n = await evaluateTargets("WEEK", new Date());
+    const n = await evaluateTargets("WEEK", now());
     expect(n).toBeGreaterThanOrEqual(1);
     const flag = await prisma.redFlag.findFirstOrThrow({ where: { kpiKey: "t1a.pct_enrolled_from_validated" } });
     expect(flag).toMatchObject({ autoRaised: true, teamCode: "T1A", agentId: await userId("jennifer"), actual: "10%", targetStandard: "≥ 20%" });
-    await evaluateTargets("WEEK", new Date());
+    await evaluateTargets("WEEK", now());
     expect(await prisma.redFlag.count({ where: { kpiKey: "t1a.pct_enrolled_from_validated" } })).toBe(1);
     void SYSTEM; void DAY;
   });

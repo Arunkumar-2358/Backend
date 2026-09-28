@@ -18,6 +18,10 @@ import { scheduleInterview, recordInterviewOutcome, sendOffer, confirmJoiningDat
 import { createEvaluation, saveScores, templateLeaves } from "@/modules/eval/service";
 import { raiseRedFlag, suggestCapa } from "@/modules/redflags/service";
 import { setAdapters, MemoryAdapter } from "@/modules/messaging/adapters";
+import { pickAssignee } from "@/modules/users/assignment";
+import { allocateQualified } from "@/modules/allocation/service";
+import { recordPlatformVisits } from "@/modules/engagement/service";
+import { allocateColdCalls, coldPoolWhere, logColdCall } from "@/modules/coldcalls/service";
 
 const FIRST = ["Aarthi", "Bhargav", "Chitra", "Deepak", "Divya", "Ganesh", "Harini", "Imran", "Janani", "Karthik", "Lakshmi", "Manoj", "Nandini", "Pradeep", "Rekha", "Sai", "Swathi", "Tarun", "Uma", "Vikram", "Yamini", "Anjali", "Ravi", "Sneha", "Farhan", "Keerthi", "Naveen", "Pooja", "Suresh", "Meena", "Arjun", "Bindu", "Chaitanya", "Durga", "Esther", "Gopal", "Hema", "Jaya", "Kiran", "Latha"];
 const LAST = ["Reddy", "Nair", "Iyer", "Sharma", "Rao", "Menon", "Pillai", "Das", "Khan", "Varma", "Naidu", "Joseph"];
@@ -124,7 +128,15 @@ export async function seedDemo() {
       /* incomplete ones stay in scrutiny */
     }
   }
-  const qualified = await prisma.candidate.findMany({ where: { stage: "QUALIFIED" } });
+  // Team 3 leader allocates qualified leads to Team 2 by category (the last few stay in the pool)
+  const sanjayLead = await actor("sanjay");
+  const pool = await prisma.candidate.findMany({ where: { stage: "QUALIFIED", allocatedAt: null }, orderBy: { stageChangedAt: "asc" } });
+  const toAllocate = pool.slice(0, Math.max(0, pool.length - 3));
+  for (const cat of [...new Set(toAllocate.map((c) => c.mainCategory))]) {
+    const sourcerId = await pickAssignee("T2", cat);
+    if (sourcerId) await allocateQualified(sanjayLead, { sourcerId, ids: toAllocate.filter((c) => c.mainCategory === cat).map((c) => c.id) });
+  }
+  const qualified = await prisma.candidate.findMany({ where: { stage: "QUALIFIED", allocatedAt: { not: null } } });
   for (const [n, c] of qualified.entries()) {
     const owner = (await loadActor(c.ownerUserId!))!;
     await recordAvailabilityCheck(owner, c.id, n % 4 !== 3, n % 4 === 3 ? "Not looking this quarter" : undefined);
@@ -135,8 +147,8 @@ export async function seedDemo() {
   const orgs = await prisma.clientOrg.findMany();
   const org = (t: string) => orgs.find((o) => o.type === t)!.id;
   const vacs = [
-    await createVacancy(dixha, { clientOrgId: org("GENERAL"), title: "Staff Nurse – ICU", category: "NURSE", specialty: "ICU", location: "Hyderabad", minExperienceYears: 2, ctcMaxLakhs: 6, maxNoticeDays: 30, openings: 2 }),
-    await createVacancy(dixha, { clientOrgId: org("EXISTING"), title: "Hospital Pharmacist", category: "PHARMACY", specialty: "Hospital pharmacy", location: "Bengaluru", minExperienceYears: 1, ctcMaxLakhs: 5, maxNoticeDays: 30, openings: 1 }),
+    await createVacancy(dixha, { clientOrgId: org("GENERAL"), title: "Staff Nurse – ICU", category: "NURSE", specialty: "ICU", location: "Hyderabad", minExperienceYears: 2, ctcMaxLakhs: 6, maxNoticeDays: 30, openings: 2, description: "Staff nurse for a 40-bed ICU, rotational shifts", mandatoryAttributes: "Kukatpally, Hyderabad · 2+ years ICU · state nursing registration · ₹18–20k/month" }),
+    await createVacancy(dixha, { clientOrgId: org("EXISTING"), title: "Hospital Pharmacist", category: "PHARMACY", specialty: "Hospital pharmacy", location: "Bengaluru", minExperienceYears: 1, ctcMaxLakhs: 5, maxNoticeDays: 30, openings: 1, description: "In-patient pharmacy, dispensing and stock", mandatoryAttributes: "B.Pharm · pharmacy council registration · 1+ year hospital pharmacy" }),
     await createVacancy(dixha, { clientOrgId: org("FREE_TRIAL"), title: "Consultant Cardiologist", category: "DOCTOR", specialty: "Cardiology", location: "Chennai", minExperienceYears: 3, ctcMaxLakhs: 35, openings: 1 }),
     await createVacancy(dixha, { clientOrgId: org("GENERAL"), title: "Lab Technician", category: "ALLIED", specialty: "Pathology", location: "Vijayawada", minExperienceYears: 1, ctcMaxLakhs: 4, openings: 1 }),
   ];
@@ -194,5 +206,25 @@ export async function seedDemo() {
   }
 
   setClock(null);
+
+  // Engagement: a spread of NT platform visits so every tier has leads. The demo only spans ~3 weeks,
+  // so a few leads are backdated past the warm window to show cold leads.
+  const tiered = await prisma.candidate.findMany({ where: { stage: { in: ["QUALIFIED", "ACTIVE"] } }, orderBy: { candidateCode: "asc" } });
+  for (const [n, c] of tiered.entries()) {
+    const daysAgo = [1, 3, 9, 25, 75][n % 5];
+    if (daysAgo > 60) await prisma.candidate.update({ where: { id: c.id }, data: { lastEngagedAt: new Date(realNow.getTime() - daysAgo * DAY), enrolledAt: new Date(realNow.getTime() - (daysAgo + 10) * DAY) } });
+    else await recordPlatformVisits([{ mobile: decryptCandidate(c).mobile!, visitedAt: new Date(realNow.getTime() - daysAgo * DAY).toISOString() }]);
+  }
+
+  // Cold-lead calls: the Team 2 leader allocates all but one of the cold leads; a couple of calls are logged.
+  const waiting = await prisma.candidate.findMany({ where: await coldPoolWhere(), select: { id: true, mainCategory: true }, orderBy: { candidateCode: "asc" } });
+  const toCall = waiting.slice(0, Math.max(0, waiting.length - 1));
+  for (const cat of [...new Set(toCall.map((c) => c.mainCategory))]) {
+    const callerId = await pickAssignee("T2", cat);
+    if (callerId) await allocateColdCalls(dixha, { callerId, ids: toCall.filter((c) => c.mainCategory === cat).map((c) => c.id) });
+  }
+  const open = await prisma.task.findMany({ where: { type: "COLD_CALL", status: "OPEN" }, orderBy: { createdAt: "asc" }, take: 2 });
+  if (open[0]) await logColdCall((await loadActor(open[0].assigneeId!))!, open[0].candidateId!, { outcome: "UNANSWERED" });
+  if (open[1]) await logColdCall((await loadActor(open[1].assigneeId!))!, open[1].candidateId!, { outcome: "NEEDS_JOB", notes: "Looking for ICU roles" });
   void SYSTEM;
 }

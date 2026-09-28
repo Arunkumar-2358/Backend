@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
-import { canReadAll, leaderTeams, stagesOwnedBy, type Actor } from "@contracts/shared/rbac";
+import { canReadAll, leaderTeams, stagesOwnedBy, teamsOf, type Actor } from "@contracts/shared/rbac";
+import { ENGAGEMENT_STAGES } from "@contracts/shared/engagement";
 
 export * from "@contracts/shared/rbac";
 
@@ -13,6 +14,8 @@ export function leadScope(a: Actor): Prisma.CandidateWhereInput {
     or.push({ stage: { in: stagesOwnedBy(lt) } });
     or.push({ owner: { roles: { some: { team: { code: { in: lt } } } } } });
   }
+  // Team 3 sees the enrolled + qualified talent pool: its leader allocates it to Team 2, recruiters match from it.
+  if (teamsOf(a).some((t) => t.startsWith("T3"))) or.push({ stage: { in: ENGAGEMENT_STAGES } });
   return { OR: or };
 }
 

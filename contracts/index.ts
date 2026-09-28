@@ -6,6 +6,7 @@ export type * from "./routes/push";
 export type * from "./routes/tasks";
 export type * from "./routes/leads";
 export type * from "./routes/outreach";
+export type * from "./routes/engagement";
 export type * from "./routes/profile";
 export type * from "./routes/vacancies";
 export type * from "./routes/evaluations";
@@ -19,6 +20,7 @@ import type { PushRoutes } from "./routes/push";
 import type { TaskRoutes } from "./routes/tasks";
 import type { LeadRoutes } from "./routes/leads";
 import type { OutreachRoutes } from "./routes/outreach";
+import type { EngagementRoutes } from "./routes/engagement";
 import type { ProfileRoutes } from "./routes/profile";
 import type { VacancyRoutes } from "./routes/vacancies";
 import type { EvaluationRoutes } from "./routes/evaluations";
@@ -33,6 +35,7 @@ export type ApiRoutes = AuthRoutes &
   TaskRoutes &
   LeadRoutes &
   OutreachRoutes &
+  EngagementRoutes &
   ProfileRoutes &
   VacancyRoutes &
   EvaluationRoutes &

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Controller, Module } from "@nestjs/common";
 import { Endpoint, type Ctx } from "@/platform/endpoint";
 import { dashboardView, kpiSheetPage } from "./queries";
+import { getDailyDashboard } from "@/kpi/daily";
 
 @Controller()
 export class KpiController {
@@ -11,6 +12,14 @@ export class KpiController {
   })
   async getKpi({ actor, query }: Ctx<"GET /v1/kpi">) {
     return kpiSheetPage(actor, query);
+  }
+
+  @Endpoint("GET /v1/kpi/daily", {
+    summary: "Daily dashboard (the TA team 1 / 2 monthly workbooks): one person's month, or the team's for leaders",
+    query: z.object({ sheet: z.string().max(8).optional(), month: z.string().max(7).optional(), user: z.string().max(64).optional() }),
+  })
+  async getKpiDaily({ actor, query }: Ctx<"GET /v1/kpi/daily">) {
+    return getDailyDashboard(actor, query);
   }
 
   @Endpoint("GET /v1/dashboard", {

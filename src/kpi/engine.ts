@@ -4,11 +4,12 @@ import { getAllSettings } from "@/lib/settings";
 import { periodRange } from "@contracts/shared/dates";
 import { SHEETS, metricsFor, type KpiValue, type Sheet } from "./definitions";
 
-export async function computeSheet(sheet: Sheet, start: Date, end: Date, userIds: string[] | null, db: Tx = prisma): Promise<Record<string, KpiValue>> {
+/** `only`: compute just these metrics (the daily dashboard needs a subset for every day of a month). */
+export async function computeSheet(sheet: Sheet, start: Date, end: Date, userIds: string[] | null, db: Tx = prisma, only?: string[]): Promise<Record<string, KpiValue>> {
   const meta = SHEETS.find((s) => s.sheet === sheet)!;
   const settings = await getAllSettings(db);
   const ctx = { db, start, end, userIds, team: meta.team, settings };
-  const defs = metricsFor(sheet);
+  const defs = only ? metricsFor(sheet).filter((d) => only.includes(d.key)) : metricsFor(sheet);
   const values: Record<string, KpiValue> = {};
   for (const d of defs) if (d.compute) values[d.key] = await d.compute(ctx);
   for (const d of defs) if (d.derive) values[d.key] = d.derive(values);

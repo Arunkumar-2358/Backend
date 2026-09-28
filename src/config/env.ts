@@ -63,6 +63,9 @@ const schema = z
     MESSAGING_PROVIDER: z.string().default("mock"),
     WHATSAPP_TOKEN: optional,
     WHATSAPP_PHONE_NUMBER_ID: optional,
+    /** Inbound WhatsApp webhook: the verify token set in the Meta app, and the app secret that signs deliveries. */
+    WHATSAPP_VERIFY_TOKEN: optional,
+    WHATSAPP_APP_SECRET: optional,
     MSG91_AUTH_KEY: optional,
     MSG91_SENDER_ID: optional,
     POSTMARK_SERVER_TOKEN: optional,

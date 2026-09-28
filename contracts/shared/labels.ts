@@ -8,6 +8,7 @@ export const OUTCOME_LABEL: Record<ContactOutcome, string> = {
   BUSY_RECALL_REQUESTED: "Bc · Busy, recall requested",
   ANSWERED: "Answered",
   ENROLLED: "Enrolled",
+  NEEDS_JOB: "Needs a job (super active)",
 };
 
 /** Which Team 3 pod a vacancy is routed to, by client type. */

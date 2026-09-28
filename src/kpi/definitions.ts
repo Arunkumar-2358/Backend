@@ -70,6 +70,80 @@ async function enrolledCohort(c: KpiCtx) {
   return { rows, ids, qualified: new Set(qualified.map((q) => q.candidateId)) };
 }
 
+/** Enrolled cohort split by funnel: NT-funnel leads (daily dashboard section 1) vs portal CVs (section 2). */
+async function cohortBy(c: KpiCtx, nt: boolean) {
+  const k = await enrolledCohort(c);
+  const rows = k.rows.filter((r) => r.candidate.isNtSource === nt);
+  return { screened: rows.filter((r) => r.candidate.scrutinizedAt).length, approved: new Set(rows.map((r) => r.candidateId).filter((id) => k.qualified.has(id))).size };
+}
+
+// Team 1 outreach attempts ----------------------------------------------------
+
+/** Team 1 outreach on a lead: excludes Team 2 cold-lead calls, NT platform registrations and missed calls. */
+const OUTREACH: Prisma.ContactAttemptWhereInput = { coldCall: false, direction: { not: "INBOUND_MISSED" }, channel: { not: "NT_PLATFORM" } };
+
+async function outreachAttempts(c: KpiCtx) {
+  const rows = await c.db.contactAttempt.findMany({
+    where: { ...OUTREACH, at: inP(c), ...users(c, "byUserId"), candidate: { isNtSource: true } },
+    select: { id: true, candidateId: true, outcome: true, linkSent: true, at: true },
+    orderBy: [{ at: "asc" }, { id: "asc" }],
+  });
+  if (!rows.length) return { rows, first: rows, history: [] as { id: string; candidateId: string; outcome: string; at: Date }[] };
+  const history = await c.db.contactAttempt.findMany({
+    where: { ...OUTREACH, candidateId: { in: [...new Set(rows.map((r) => r.candidateId))] }, at: { lt: c.end } },
+    select: { id: true, candidateId: true, outcome: true, at: true },
+    orderBy: [{ at: "asc" }, { id: "asc" }],
+  });
+  const firstId = new Map<string, string>();
+  for (const h of history) if (!firstId.has(h.candidateId)) firstId.set(h.candidateId, h.id);
+  return { rows, first: rows.filter((r) => firstId.get(r.candidateId) === r.id), history };
+}
+
+/** Re-attempts in the period on leads left interested but not registered (previous outcome Bb). */
+async function followUps(c: KpiCtx) {
+  const { rows, first, history } = await outreachAttempts(c);
+  const firstIds = new Set(first.map((f) => f.id));
+  return rows.filter((r) => {
+    if (firstIds.has(r.id)) return false;
+    const before = history.filter((h) => h.candidateId === r.candidateId && (h.at < r.at || (h.at.getTime() === r.at.getTime() && h.id < r.id)));
+    return before.at(-1)?.outcome === "INTERESTED_LINK_SENT_NOT_REGISTERED";
+  }).length;
+}
+
+/** Validated → Enrolled (NT funnel) credited to the agent, split by how many outreach attempts it took. */
+function enrolledByAttempts(c: KpiCtx, reattempted: boolean) {
+  return c.db.leadStageHistory.count({
+    where: historyWhere(c, "ENROLLED", "prevOwnerUserId", { fromStage: "VALIDATED", candidate: { isNtSource: true, contactAttemptCount: reattempted ? { gt: 1 } : { lte: 1 } } }),
+  });
+}
+
+/** Portal CVs the agent entered: LinkedIn vs the other non-NT job portals. */
+function portalCvs(c: KpiCtx, linkedin: boolean) {
+  return c.db.candidate.count({ where: { isNtSource: false, source: linkedin ? "LINKEDIN" : { in: ["NAUKRI", "INDEED", "OTHER_PORTAL"] }, createdAt: inP(c), ...users(c, "createdById") } });
+}
+
+async function openingsOf(c: KpiCtx, field: "taLeadId" | "sourcerId") {
+  const r = await c.db.vacancy.aggregate({ where: { postedAt: inP(c), ...users(c, field) }, _sum: { openings: true } });
+  return r._sum.openings ?? 0;
+}
+
+// Team 2 sourcing and cold-lead calls ------------------------------------------
+
+/** Candidates the sourcer shortlisted for vacancies in the period (invited to apply or CV submitted), with their funnel. */
+async function shortlistedCvs(c: KpiCtx) {
+  const [subs, invites] = await Promise.all([
+    c.db.submission.findMany({ where: { submittedAt: inP(c), ...users(c, "submittedById") }, select: { candidateId: true, candidate: { select: { isNtSource: true } } } }),
+    c.db.message.findMany({ where: { templateKey: { startsWith: "invite_to_apply" }, createdAt: inP(c), ...users(c, "sentById") }, select: { candidateId: true, candidate: { select: { isNtSource: true } } } }),
+  ]);
+  const nt = new Map<string, boolean>();
+  for (const r of [...subs, ...invites]) if (r.candidateId && r.candidate) nt.set(r.candidateId, r.candidate.isNtSource);
+  return [...nt.values()];
+}
+
+function coldCalls(c: KpiCtx, direction: "OUTBOUND" | "RECALL", outcome?: Prisma.EnumContactOutcomeFilter) {
+  return c.db.contactAttempt.count({ where: { coldCall: true, direction, at: inP(c), ...users(c, "byUserId"), ...(outcome ? { outcome } : {}) } });
+}
+
 // Vacancy scopes ------------------------------------------------------------
 
 function vacWhere(c: KpiCtx, field: "sourcerId" | "recruiterId", extra: Prisma.VacancyWhereInput = {}): Prisma.VacancyWhereInput {
@@ -111,9 +185,39 @@ const T1A: KpiDef[] = [
   { key: "t1a.pct_enrolled_nonnt", label: "% enrolled from non-NT", sheet: "T1A", unit: "pct", description: "Enrolled from non-NT / non-NT leads downloaded",
     derive: (v) => pct(v["t1a.enrolled_nonnt"], v["t1a.nonnt_downloaded"]) },
   { key: "t1a.calls_attempted", label: "Calls attempted", sheet: "T1A", unit: "count", description: "Outbound / recall calls logged",
-    compute: (c) => c.db.contactAttempt.count({ where: { channel: "CALL", direction: { not: "INBOUND_MISSED" }, at: inP(c), ...users(c, "byUserId") } }) },
+    compute: (c) => c.db.contactAttempt.count({ where: { channel: "CALL", coldCall: false, direction: { not: "INBOUND_MISSED" }, at: inP(c), ...users(c, "byUserId") } }) },
   { key: "t1a.unanswered_calls", label: "Unanswered / pending calls", sheet: "T1A", unit: "count", description: "Calls with outcome Unanswered or Busy-recall",
-    compute: (c) => c.db.contactAttempt.count({ where: { channel: "CALL", direction: { not: "INBOUND_MISSED" }, outcome: { in: ["UNANSWERED", "BUSY_RECALL_REQUESTED"] }, at: inP(c), ...users(c, "byUserId") } }) },
+    compute: (c) => c.db.contactAttempt.count({ where: { channel: "CALL", coldCall: false, direction: { not: "INBOUND_MISSED" }, outcome: { in: ["UNANSWERED", "BUSY_RECALL_REQUESTED"] }, at: inP(c), ...users(c, "byUserId") } }) },
+  // Daily dashboard (TA team 1 sheet) — section 1: allocated validated leads
+  { key: "t1a.leads_attempted", label: "Validated leads attempted", sheet: "T1A", unit: "count", description: "NT-funnel leads the agent contacted for the first time",
+    compute: async (c) => (await outreachAttempts(c)).first.length },
+  { key: "t1a.leads_answered", label: "Validated leads answered", sheet: "T1A", unit: "count", description: "First contacts that were answered (any outcome but Unanswered)",
+    compute: async (c) => (await outreachAttempts(c)).first.filter((a) => a.outcome !== "UNANSWERED").length },
+  { key: "t1a.leads_interested", label: "Interested (enrolment link sent)", sheet: "T1A", unit: "count", description: "First contacts that ended with the enrolment link sent or the lead enrolled",
+    compute: async (c) => (await outreachAttempts(c)).first.filter((a) => a.linkSent || a.outcome === "INTERESTED_LINK_SENT_NOT_REGISTERED" || a.outcome === "ENROLLED").length },
+  { key: "t1a.enrolled_first_attempt", label: "Enrolled on the first attempt", sheet: "T1A", unit: "count", description: "NT-funnel enrolments that took at most one outreach attempt",
+    compute: (c) => enrolledByAttempts(c, false) },
+  { key: "t1a.followups_done", label: "Follow-ups on interested leads", sheet: "T1A", unit: "count", description: "Re-attempts on leads left interested but not yet registered",
+    compute: followUps },
+  { key: "t1a.enrolled_reattempted", label: "Enrolled after re-attempts", sheet: "T1A", unit: "count", description: "NT-funnel enrolments that took more than one outreach attempt",
+    compute: (c) => enrolledByAttempts(c, true) },
+  { key: "t1a.nt_screened", label: "Validated enrolments scrutinised", sheet: "T1A", unit: "count", description: "Of the period's NT-funnel enrolments, how many Team 2 has scrutinised",
+    compute: async (c) => (await cohortBy(c, true)).screened },
+  { key: "t1a.nt_approved", label: "Validated enrolments approved", sheet: "T1A", unit: "count", description: "Of the period's NT-funnel enrolments, how many reached Qualified",
+    compute: async (c) => (await cohortBy(c, true)).approved },
+  // Section 2: allocated job postings (portal CVs)
+  { key: "t1a.job_postings", label: "Job postings given", sheet: "T1A", unit: "count", description: "Vacancies posted in the period with the agent as TA lead",
+    compute: (c) => c.db.vacancy.count({ where: { postedAt: inP(c), ...users(c, "taLeadId") } }) },
+  { key: "t1a.job_openings", label: "Openings in those postings", sheet: "T1A", unit: "count", description: "Openings across the job postings given",
+    compute: (c) => openingsOf(c, "taLeadId") },
+  { key: "t1a.cvs_other_portals", label: "CVs from non-LinkedIn portals", sheet: "T1A", unit: "count", description: "Leads the agent entered from Naukri, Indeed or other portals",
+    compute: (c) => portalCvs(c, false) },
+  { key: "t1a.cvs_linkedin", label: "CVs from LinkedIn", sheet: "T1A", unit: "count", description: "Leads the agent entered from LinkedIn",
+    compute: (c) => portalCvs(c, true) },
+  { key: "t1a.portal_screened", label: "Portal enrolments scrutinised", sheet: "T1A", unit: "count", description: "Of the period's non-NT enrolments, how many Team 2 has scrutinised",
+    compute: async (c) => (await cohortBy(c, false)).screened },
+  { key: "t1a.portal_approved", label: "Portal enrolments approved", sheet: "T1A", unit: "count", description: "Of the period's non-NT enrolments, how many reached Qualified",
+    compute: async (c) => (await cohortBy(c, false)).approved },
 ];
 
 async function firstCalls(c: KpiCtx) {
@@ -188,6 +292,36 @@ const T2: KpiDef[] = [
   { key: "t2.pct_qualified", label: "% qualified out of enrolled", sheet: "T2", unit: "pct", description: "Qualified / enrolled received", derive: (v) => pct(v["t2.qualified"], v["t2.enrolled_received"]) },
   { key: "t2.pct_sourced_nt", label: "% vacancies sourced from NT", sheet: "T2", unit: "pct", description: "Vacancies with 5 NT CVs / vacancies worked", derive: (v) => pct(v["t2.vacancies_5_nt"], v["t2.vacancies_worked"]) },
   { key: "t2.pct_sourced_nonnt", label: "% vacancies sourced from non-NT", sheet: "T2", unit: "pct", description: "Vacancies with 5 non-NT CVs / vacancies worked", derive: (v) => pct(v["t2.vacancies_5_nonnt"], v["t2.vacancies_worked"]) },
+  // Daily dashboard (TA team 2 sheet) — section 1: allocated job postings
+  { key: "t2.job_postings", label: "Job postings given", sheet: "T2", unit: "count", description: "Vacancies posted in the period with the agent as sourcer",
+    compute: (c) => c.db.vacancy.count({ where: { postedAt: inP(c), ...users(c, "sourcerId") } }) },
+  { key: "t2.job_openings", label: "Openings in those postings", sheet: "T2", unit: "count", description: "Openings across the job postings given",
+    compute: (c) => openingsOf(c, "sourcerId") },
+  { key: "t2.cvs_nt", label: "Matching CVs from NT", sheet: "T2", unit: "count", description: "NT-funnel candidates the agent invited to apply or submitted",
+    compute: async (c) => (await shortlistedCvs(c)).filter((nt) => nt).length },
+  { key: "t2.cvs_nonnt", label: "Matching CVs from non-NT portals", sheet: "T2", unit: "count", description: "Non-NT candidates the agent invited to apply or submitted",
+    compute: async (c) => (await shortlistedCvs(c)).filter((nt) => !nt).length },
+  { key: "t2.cvs_to_team3", label: "CVs given to Team 3", sheet: "T2", unit: "count", description: "CVs the agent submitted to recruiters",
+    compute: (c) => c.db.submission.count({ where: { submittedAt: inP(c), ...users(c, "submittedById") } }) },
+  // Section 2: allocated cold leads (calls)
+  { key: "t2.cold_allocated", label: "Cold leads allocated for calls", sheet: "T2", unit: "count", description: "Cold-lead calls allocated to the agent by the Team 2 leader",
+    compute: (c) => c.db.task.count({ where: { type: "COLD_CALL", createdAt: inP(c), ...users(c, "assigneeId") } }) },
+  { key: "t2.cold_attempted", label: "Cold leads attempted", sheet: "T2", unit: "count", description: "First calls on allocated cold leads",
+    compute: (c) => coldCalls(c, "OUTBOUND") },
+  { key: "t2.cold_answered", label: "Cold leads answered", sheet: "T2", unit: "count", description: "First calls that were answered",
+    compute: (c) => coldCalls(c, "OUTBOUND", { not: "UNANSWERED" }) },
+  { key: "t2.cold_super_active", label: "Super active from first calls", sheet: "T2", unit: "count", description: "First calls where the candidate needs a job",
+    compute: (c) => coldCalls(c, "OUTBOUND", { equals: "NEEDS_JOB" }) },
+  { key: "t2.cold_recalled", label: "Unanswered cold leads recalled", sheet: "T2", unit: "count", description: "Re-attempts on cold leads that did not answer",
+    compute: (c) => coldCalls(c, "RECALL") },
+  { key: "t2.cold_recall_answered", label: "Re-attempted cold leads answered", sheet: "T2", unit: "count", description: "Re-attempts that were answered",
+    compute: (c) => coldCalls(c, "RECALL", { not: "UNANSWERED" }) },
+  { key: "t2.cold_recall_super_active", label: "Super active from re-attempts", sheet: "T2", unit: "count", description: "Re-attempts where the candidate needs a job",
+    compute: (c) => coldCalls(c, "RECALL", { equals: "NEEDS_JOB" }) },
+  { key: "t2.cold_super_active_total", label: "Total super active from cold calls", sheet: "T2", unit: "count", description: "First calls + re-attempts where the candidate needs a job",
+    derive: (v) => sum(v["t2.cold_super_active"], v["t2.cold_recall_super_active"]) },
+  { key: "t2.pct_cold_super_active", label: "% super active of answered cold calls", sheet: "T2", unit: "pct", description: "Total super active / (answered + re-attempts answered)",
+    derive: (v) => pct(v["t2.cold_super_active_total"], sum(v["t2.cold_answered"], v["t2.cold_recall_answered"])) },
   { key: "t2.avg_cvs_per_vacancy", label: "Average sourced CVs per vacancy", sheet: "T2", unit: "avg", description: "CVs submitted in the period / vacancies worked",
     compute: async (c) => {
       const worked = await c.db.vacancy.findMany({ where: vacWhere(c, "sourcerId", workedDuring(c)), select: { id: true } });

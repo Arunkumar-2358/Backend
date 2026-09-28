@@ -1,4 +1,5 @@
 import { prisma, type Tx } from "./db";
+import { DEFAULT_ENGAGEMENT_DAYS } from "@contracts/shared/engagement";
 
 /**
  * Business configuration. Defaults follow PLAN.md §10 assumptions; admins can
@@ -27,6 +28,14 @@ export const DEFAULT_SETTINGS = {
   /** hours until the automatic follow-up for each outcome */
   followupHours: { UNANSWERED: 24, INTERESTED_LINK_SENT_NOT_REGISTERED: 48, BUSY_RECALL_REQUESTED: 4 } as Record<string, number>,
   availabilityCheckIntervalDays: 60,
+  /** Engagement tiers: days since last engaged (visit / job intent) up to which a lead is super active, active, warm; older is cold */
+  engagementTierDays: { ...DEFAULT_ENGAGEMENT_DAYS } as Record<string, number>,
+  /** Most cold-lead re-engagement WhatsApps sent per day (spreads a backlog out) */
+  reengageDailyLimit: 200,
+  /** Cold-lead calls (Team 2): attempts before an unanswered lead is given up for this cold spell */
+  coldCallMaxAttempts: 3,
+  /** hours until an unanswered cold-lead call comes back as a recall */
+  coldCallRecallHours: 24,
   cvTargetPerVacancy: 5,
   cvMinTeam3bc: 2,
   interviewReminderOffsetsHours: [24, 2] as number[],

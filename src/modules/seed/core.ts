@@ -76,6 +76,7 @@ export const TEMPLATES = [
   { key: "offer_sent_whatsapp", name: "Offer letter sent (WhatsApp)", channel: "WHATSAPP", body: "Congratulations {{name}}! Your offer for {{role}} has been shared. Please confirm your joining date. – Nextenti" },
   { key: "invite_to_apply_whatsapp", name: "Invite to apply (WhatsApp)", channel: "WHATSAPP", body: "Hi {{name}}, a {{role}} role at {{org}}, {{location}} matches your profile. Reply YES to apply. – Nextenti" },
   { key: "invite_to_apply_sms", name: "Invite to apply (SMS)", channel: "SMS", body: "Nextenti: {{role}} at {{org}}, {{location}} matches your profile. Reply YES to apply." },
+  { key: "reengage_cold_whatsapp", name: "Cold lead re-engagement (WhatsApp)", channel: "WHATSAPP", body: "Hi {{name}}, it's been a while since you visited Nextenti. Are you looking for a healthcare job right now? Reply YES if you need a job, or NO if not. – Nextenti" },
   { key: "invite_to_apply_email", name: "Invite to apply (email)", channel: "EMAIL", subject: "{{role}} at {{org}}", body: "Dear {{name}},\n\nA {{role}} opening at {{org}} ({{location}}) matches your profile. Reply to this email to apply.\n\nTeam Nextenti" },
 ] as const;
 

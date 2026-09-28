@@ -28,6 +28,8 @@ export type VacancyInput = {
   maxNoticeDays?: number | null;
   openings?: number;
   postedAt?: Date;
+  description?: string | null;
+  mandatoryAttributes?: string | null;
 };
 
 async function nextVacancyCode(db: Tx) {
@@ -43,6 +45,8 @@ export async function createVacancy(actor: Actor, input: VacancyInput, db: Tx = 
     const postedAt = input.postedAt ?? now();
     const recruiterId = await pickAssignee(routedTeam, input.category, tx);
     const sourcerId = await pickAssignee("T2", input.category, tx);
+    // The Team 1a TA lead for the category is given the posting too, to source CVs from job portals.
+    const taLeadId = await pickAssignee("T1A", input.category, tx);
     const v = await tx.vacancy.create({
       data: {
         ...input,
@@ -52,11 +56,12 @@ export async function createVacancy(actor: Actor, input: VacancyInput, db: Tx = 
         routedTeam,
         recruiterId,
         sourcerId,
+        taLeadId,
         status: "OPEN",
         createdAt: now(),
       },
     });
-    await audit(actor, "CREATE", "vacancy", v.id, { routedTeam, recruiterId, sourcerId, addedBefore2pm: v.addedBefore2pm }, tx);
+    await audit(actor, "CREATE", "vacancy", v.id, { routedTeam, recruiterId, sourcerId, taLeadId, addedBefore2pm: v.addedBefore2pm }, tx);
     return v;
   });
 }

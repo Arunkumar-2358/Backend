@@ -82,6 +82,22 @@ enum MainCategory {
   OTHER
 }
 
+/// Engagement of an enrolled + qualified lead, from how recently they were last active on the NT platform
+/// (or confirmed they need a job). Derived from candidates.last_engaged_at; see contracts/shared/engagement.ts.
+enum EngagementTier {
+  SUPER_ACTIVE
+  ACTIVE
+  WARM
+  COLD
+}
+
+/// What a candidate's reply to the cold-lead re-engagement WhatsApp says about their job need.
+enum JobIntent {
+  LOOKING
+  NOT_LOOKING
+  UNCLEAR
+}
+
 enum LeadSource {
   CONVENTIONAL_MARKETING
   NT
@@ -147,6 +163,7 @@ enum ContactOutcome {
   BUSY_RECALL_REQUESTED // "Bc"
   ANSWERED // answered, conversation in progress (used by missed-call funnel)
   ENROLLED
+  NEEDS_JOB // cold-lead call: the candidate confirmed they need a job (→ super active)
 }
 
 enum TaskType {
@@ -157,6 +174,8 @@ enum TaskType {
   INTERVIEW_REMINDER
   OFFER_FOLLOW_UP
   RETENTION_CHECK
+  REENGAGE_REPLY // review a cold lead's WhatsApp reply that could not be read automatically
+  COLD_CALL // Team 2 calls a cold lead to ask if they need a job (allocated by the Team 2 leader)
   GENERAL
 }
 
@@ -283,6 +302,7 @@ model User {
   importBatches     ImportBatch[]
   vacanciesAssigned Vacancy[]         @relation("VacancyRecruiter")
   vacanciesSourcing Vacancy[]         @relation("VacancySourcer")
+  vacanciesTaLead   Vacancy[]         @relation("VacancyTaLead")
   notifications     Notification[]
   pushSubscriptions PushSubscription[]
   authSessions      AuthSession[]
@@ -403,6 +423,15 @@ model Candidate {
   enrolledAt             DateTime?
   scrutinizedAt          DateTime?
   scrutinizedById        String?
+  // Team 3 leader hands each Qualified lead to a Team 2 sourcer (by category) before Team 2 works it
+  allocatedAt            DateTime?
+  allocatedById          String?
+  // Engagement (super active / active / warm / cold) — see EngagementTier
+  lastPlatformVisitAt    DateTime? // latest NT platform / app visit (nt-activity webhook)
+  jobIntentAt            DateTime? // latest "yes, I need a job" (WhatsApp reply or confirmed on a call)
+  lastEngagedAt          DateTime? // max(enrolment, last visit, job intent); drives the tier
+  reengageSentAt         DateTime? // last cold-lead re-engagement WhatsApp
+  coldCallAllocatedAt    DateTime? // last time the Team 2 leader allocated this cold lead for a call
   createdById            String?
   createdAt              DateTime             @default(now())
   lastUpdated            DateTime             @updatedAt
@@ -419,6 +448,7 @@ model Candidate {
   messages        Message[]
   availabilityChecks AvailabilityCheck[]
   deletionRequests DataDeletionRequest[]
+  inboundMessages  InboundMessage[]
 
   @@index([stage])
   @@index([ownerUserId])
@@ -429,6 +459,8 @@ model Candidate {
   @@index([nextFollowupAt])
   @@index([mobileLast4])
   @@index([createdAt])
+  @@index([stage, allocatedAt])
+  @@index([stage, lastEngagedAt])
   @@map("candidates")
 }
 
@@ -461,6 +493,8 @@ model ContactAttempt {
   outcome        ContactOutcome
   isFirstTimeVerifiedCall Boolean @default(false)
   linkSent       Boolean          @default(false)
+  /// Team 2 cold-lead re-engagement call (not Team 1 outreach); direction RECALL = a re-attempt
+  coldCall       Boolean          @default(false)
   notes          String?
   nextFollowupAt DateTime?
   byUserId       String?
@@ -471,6 +505,7 @@ model ContactAttempt {
 
   @@index([candidateId, at])
   @@index([byUserId, at])
+  @@index([coldCall, byUserId, at])
   @@map("contact_attempts")
 }
 
@@ -635,6 +670,9 @@ model Vacancy {
   routedTeam          TeamCode
   recruiterId         String?
   sourcerId           String? // Team 2 sourcer responsible for CV matching
+  taLeadId            String? // Team 1a TA lead given the job posting to source portal CVs (by category)
+  description         String? // free-text job description, as posted
+  mandatoryAttributes String? // must-haves: location, experience, registration, salary …
   wasPending          Boolean       @default(false)
   sourcingCompletedAt DateTime? // when the 5th CV was submitted
   closedAt            DateTime?
@@ -643,6 +681,7 @@ model Vacancy {
   clientOrg   ClientOrg    @relation(fields: [clientOrgId], references: [id])
   recruiter   User?        @relation("VacancyRecruiter", fields: [recruiterId], references: [id])
   sourcer     User?        @relation("VacancySourcer", fields: [sourcerId], references: [id])
+  taLead      User?        @relation("VacancyTaLead", fields: [taLeadId], references: [id])
   submissions Submission[]
   evaluations Evaluation[]
 
@@ -650,6 +689,7 @@ model Vacancy {
   @@index([routedTeam, status])
   @@index([recruiterId])
   @@index([sourcerId])
+  @@index([taLeadId])
   @@map("vacancies")
 }
 
@@ -928,6 +968,23 @@ model Message {
 
   @@index([candidateId, createdAt])
   @@map("messages")
+}
+
+/// Inbound WhatsApp messages (replies to the re-engagement message), from the WhatsApp Cloud webhook.
+model InboundMessage {
+  id          String     @id @default(cuid())
+  candidateId String?
+  channel     Channel
+  fromLast4   String
+  body        String
+  intent      JobIntent
+  providerRef String     @unique // provider message id: webhook retries are ignored
+  receivedAt  DateTime   @default(now())
+
+  candidate Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+
+  @@index([candidateId, receivedAt])
+  @@map("inbound_messages")
 }
 
 model AppSetting {

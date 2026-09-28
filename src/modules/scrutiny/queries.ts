@@ -8,6 +8,7 @@ import { startOfIstMonth, startOfIstWeek } from "@contracts/shared/dates";
 import { completenessPct, missingMandatory } from "@contracts/shared/fields";
 import type { UserActor } from "@/platform/endpoint";
 import { decryptCandidate } from "@/modules/candidates/service";
+import { PENDING_ALLOCATION } from "@/modules/allocation/service";
 
 // ───────────── Availability check-ins ─────────────
 
@@ -24,14 +25,15 @@ export async function getAvailability(actor: UserActor, opts: { page?: number; c
   const page = Math.max(1, opts.page ?? 1);
   const coldOnly = !!opts.cold;
   const isLeader = isStageLeader(actor, "QUALIFIED");
-  const scope: Prisma.CandidateWhereInput = { anonymizedAt: null, ...(isLeader ? {} : { ownerUserId: actor.id }) };
+  // Team 2 works a qualified lead only once the Team 3 leader has allocated it.
+  const scope: Prisma.CandidateWhereInput = { anonymizedAt: null, NOT: PENDING_ALLOCATION, ...(isLeader ? {} : { ownerUserId: actor.id }) };
   const t = now();
   const weekStart = startOfIstWeek(t);
   const monthStart = startOfIstMonth(t);
   const convWhere = (from: Date): Prisma.AvailabilityCheckWhereInput => ({ available: true, wasCold: true, checkedAt: { gte: from }, candidate: scope });
   const qualifiedWhere: Prisma.CandidateWhereInput = { ...scope, stage: "QUALIFIED", ...(coldOnly ? { isCold: true } : {}) };
 
-  const [dueTasks, qualified, qualifiedTotal, coldCount, convWeek, convMonth, recent, interval] = await Promise.all([
+  const [dueTasks, qualified, qualifiedTotal, coldCount, convWeek, convMonth, recent, interval, awaitingAllocation] = await Promise.all([
     prisma.task.findMany({
       where: { type: "AVAILABILITY_CHECK", status: "OPEN", candidate: scope },
       include: { candidate: { include: leadInclude } },
@@ -56,6 +58,7 @@ export async function getAvailability(actor: UserActor, opts: { page?: number; c
       take: 10,
     }),
     getSetting("availabilityCheckIntervalDays"),
+    prisma.candidate.count({ where: PENDING_ALLOCATION }),
   ]);
 
   const ids = [...new Set([...qualified.map((c) => c.id), ...dueTasks.map((d) => d.candidateId).filter((x): x is string => !!x)])];
@@ -87,6 +90,7 @@ export async function getAvailability(actor: UserActor, opts: { page?: number; c
     page,
     pageSize: AVAILABILITY_PAGE_SIZE,
     interval,
+    awaitingAllocation,
     weekStart,
     monthStart,
     // The task filter requires a candidate in scope, so candidate is always present.

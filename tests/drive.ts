@@ -9,6 +9,8 @@ import { verifyAndQualify, recordAvailabilityCheck } from "@/modules/scrutiny/se
 import { createVacancy, submitCandidate } from "@/modules/vacancies/service";
 import { scheduleInterview, recordInterviewOutcome, sendOffer, confirmJoiningDate, recordJoining, completeFormalities, recordRetentionCheck } from "@/modules/interviews/service";
 import type { CandidateInput } from "@/modules/candidates/service";
+import { allocateQualified } from "@/modules/allocation/service";
+import { pickAssignee } from "@/modules/users/assignment";
 import { as, newLead } from "./helpers";
 
 export async function ownerActor(leadId: string) {
@@ -26,7 +28,15 @@ export async function makeVacancy(overrides: Partial<Parameters<typeof createVac
 
 const ORDER: Stage[] = ["MAPPING", "VALIDATED", "ENROLLED", "QUALIFIED", "ACTIVE", "SOURCED", "SELECTED", "JOINED", "SUCCESSFUL"];
 
-export async function driveTo(target: Stage, overrides: CandidateInput = {}, ctx: { vacancyId?: string } = {}) {
+/** Team 3 leader hands a qualified lead to the Team 2 sourcer the assignment rules pick. */
+export async function allocate(leadId: string) {
+  const c = await prisma.candidate.findUniqueOrThrow({ where: { id: leadId } });
+  const sourcerId = (await pickAssignee("T2", c.mainCategory))!;
+  return allocateQualified(await as("sanjay"), { sourcerId, ids: [leadId] });
+}
+
+/** `allocate: false` leaves a Qualified lead in the Team 3 leader's pool. */
+export async function driveTo(target: Stage, overrides: CandidateInput = {}, ctx: { vacancyId?: string; allocate?: boolean } = {}) {
   const lead = await newLead(overrides);
   const id = lead.id;
   const reach = (s: Stage) => ORDER.indexOf(target) >= ORDER.indexOf(s);
@@ -34,6 +44,7 @@ export async function driveTo(target: Stage, overrides: CandidateInput = {}, ctx
   if (reach("VALIDATED")) await transitionLead(SYSTEM("import"), id, "VALIDATED");
   if (reach("ENROLLED")) await logContact(await ownerActor(id), id, { channel: "CALL", outcome: "ENROLLED" });
   if (reach("QUALIFIED")) await verifyAndQualify(await as("dixha"), id, "Verified");
+  if (reach("QUALIFIED") && (ctx.allocate ?? true)) await allocate(id);
   if (reach("ACTIVE")) await recordAvailabilityCheck(await ownerActor(id), id, true, undefined);
   if (reach("SOURCED")) {
     vacancyId ??= (await makeVacancy()).id;

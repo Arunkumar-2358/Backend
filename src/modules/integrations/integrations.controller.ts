@@ -8,6 +8,7 @@ import { ValidationError } from "@/lib/errors";
 import { RawEndpoint, type RawCtx } from "@/platform/endpoint";
 import { logMissedCall, handleNtEnrolment, type NtEnrolmentEvent } from "@/modules/outreach/service";
 import { ensureRecurringJobs, runDueJobs } from "@/modules/jobs/runner";
+import { handleInboundWhatsApp, recordPlatformVisits, type InboundWhatsApp, type PlatformVisit } from "@/modules/engagement/service";
 
 function safeEqual(a: string, b: string) {
   const x = Buffer.from(a);
@@ -90,6 +91,40 @@ async function runJobs(req: FastifyRequest, reply: FastifyReply) {
   return { ok: true, ran: results.length, failed: results.filter((r) => r.result.startsWith("error:")).length, ms: Date.now() - started, results };
 }
 
+const MAX_VISITS = 1000;
+
+/** `{ mobile, visitedAt? }` or `{ visits: [{ mobile, visitedAt? }, …] }`. */
+function parseVisits(body: unknown): PlatformVisit[] | string {
+  const list = body && typeof body === "object" && Array.isArray((body as { visits?: unknown }).visits) ? (body as { visits: unknown[] }).visits : [body];
+  if (list.length > MAX_VISITS) return `At most ${MAX_VISITS} visits per request`;
+  const out: PlatformVisit[] = [];
+  for (const v of list) {
+    if (!v || typeof v !== "object" || typeof (v as PlatformVisit).mobile !== "string") return "Each visit needs `mobile` (string)";
+    const { mobile, visitedAt } = v as PlatformVisit;
+    if (visitedAt !== undefined && (typeof visitedAt !== "string" || isNaN(new Date(visitedAt).getTime()))) return "`visitedAt` must be an ISO date";
+    out.push({ mobile, visitedAt });
+  }
+  return out;
+}
+
+type WaMessage = { id?: string; from?: string; timestamp?: string; type?: string; text?: { body?: string }; button?: { payload?: string; text?: string }; interactive?: { button_reply?: { id?: string; title?: string } } };
+
+/** Customer messages in a WhatsApp Cloud API delivery (status updates are ignored). */
+function whatsappMessages(body: unknown): InboundWhatsApp[] {
+  const out: InboundWhatsApp[] = [];
+  const entries = (body as { entry?: { changes?: { value?: { messages?: WaMessage[] } }[] }[] })?.entry ?? [];
+  for (const e of entries)
+    for (const c of e.changes ?? [])
+      for (const m of c.value?.messages ?? []) {
+        // Quick-reply buttons carry an id (JOB_YES / JOB_NO); plain text is read as yes / no.
+        const text = m.interactive?.button_reply?.id ?? m.button?.payload ?? m.text?.body ?? m.button?.text ?? "";
+        if (!m.id || !m.from || !text) continue;
+        const ts = Number(m.timestamp);
+        out.push({ providerRef: m.id, from: m.from, text, receivedAt: Number.isFinite(ts) && ts > 0 ? new Date(ts * 1000) : undefined });
+      }
+  return out;
+}
+
 const TELEPHONY = "Telephony/IVR missed-call hook (?token=TELEPHONY_WEBHOOK_TOKEN)";
 const CRON = "Run due scheduled jobs (x-cron-secret or Bearer CRON_SECRET)";
 
@@ -126,6 +161,45 @@ export class IntegrationsController {
       if (e instanceof ValidationError) return fail(reply, 400, e.message);
       throw e;
     }
+  }
+
+  @RawEndpoint("POST", "/v1/webhooks/nt-activity", { auth: "public", tag: "integrations", summary: "NT platform / app visits, for engagement tiers (x-nt-signature: HMAC-SHA256 of body)" })
+  async ntActivity({ req, reply }: RawCtx<null>) {
+    if (!env.NT_WEBHOOK_SECRET) return fail(reply, 503, "Webhook not configured");
+    const raw = rawBytes(req);
+    if (!validSignature(raw, req.headers["x-nt-signature"] as string | undefined, env.NT_WEBHOOK_SECRET)) return fail(reply, 401, "Invalid signature");
+    let body: unknown;
+    try {
+      body = JSON.parse(raw.toString("utf8"));
+    } catch {
+      return fail(reply, 400, "Body must be JSON");
+    }
+    const visits = parseVisits(body);
+    if (typeof visits === "string") return fail(reply, 400, visits);
+    return { ok: true, ...(await recordPlatformVisits(visits)) };
+  }
+
+  // Meta calls this once with hub.* query params when the webhook URL is registered.
+  @RawEndpoint("GET", "/v1/webhooks/whatsapp", { auth: "public", tag: "integrations", summary: "WhatsApp Cloud API webhook verification (hub.verify_token = WHATSAPP_VERIFY_TOKEN)" })
+  async whatsappVerify({ req, reply }: RawCtx<null>) {
+    if (!env.WHATSAPP_VERIFY_TOKEN) return fail(reply, 503, "WhatsApp webhook not configured");
+    const q = req.query as Record<string, string | undefined>;
+    if (q["hub.mode"] !== "subscribe" || !safeEqual(q["hub.verify_token"] ?? "", env.WHATSAPP_VERIFY_TOKEN)) return fail(reply, 403, "Verification failed");
+    return reply.type("text/plain").send(q["hub.challenge"] ?? "");
+  }
+
+  @RawEndpoint("POST", "/v1/webhooks/whatsapp", { auth: "public", tag: "integrations", summary: "WhatsApp Cloud API inbound messages (x-hub-signature-256: HMAC-SHA256 with WHATSAPP_APP_SECRET)" })
+  async whatsappInbound({ req, reply }: RawCtx<null>) {
+    if (!env.WHATSAPP_APP_SECRET) return fail(reply, 503, "WhatsApp webhook not configured");
+    const raw = rawBytes(req);
+    if (!validSignature(raw, req.headers["x-hub-signature-256"] as string | undefined, env.WHATSAPP_APP_SECRET)) return fail(reply, 401, "Invalid signature");
+    let body: unknown;
+    try {
+      body = JSON.parse(raw.toString("utf8"));
+    } catch {
+      return fail(reply, 400, "Body must be JSON");
+    }
+    return { ok: true, ...(await handleInboundWhatsApp(whatsappMessages(body))) };
   }
 
   @RawEndpoint("POST", "/v1/cron/run-jobs", { auth: "public", tag: "integrations", summary: CRON })

@@ -10,6 +10,17 @@ export type DropReason = "INTERVIEW_NO_SHOW" | "REJECTED" | "OFFER_DECLINED" | "
 
 export type MainCategory = "DOCTOR" | "NURSE" | "PHARMACY" | "ALLIED" | "ADMIN" | "OTHER";
 
+/**
+ * Engagement of an enrolled + qualified lead, from how recently they were last active on the NT platform
+ * (or confirmed they need a job). Derived from candidates.last_engaged_at; see contracts/shared/engagement.ts.
+ */
+export type EngagementTier = "SUPER_ACTIVE" | "ACTIVE" | "WARM" | "COLD";
+
+/**
+ * What a candidate's reply to the cold-lead re-engagement WhatsApp says about their job need.
+ */
+export type JobIntent = "LOOKING" | "NOT_LOOKING" | "UNCLEAR";
+
 export type LeadSource = "CONVENTIONAL_MARKETING" | "NT" | "NAUKRI" | "LINKEDIN" | "INDEED" | "REFERRAL" | "DIGITAL_MARKETING" | "OTHER_PORTAL" | "OTHER";
 
 export type EmploymentPreference = "FULL_TIME" | "PART_TIME" | "LOCUM" | "CONTRACT";
@@ -26,9 +37,9 @@ export type Channel = "CALL" | "WHATSAPP" | "SMS" | "EMAIL" | "NT_PLATFORM";
 
 export type ContactDirection = "OUTBOUND" | "INBOUND_MISSED" | "RECALL";
 
-export type ContactOutcome = "UNANSWERED" | "NOT_INTERESTED" | "INTERESTED_LINK_SENT_NOT_REGISTERED" | "BUSY_RECALL_REQUESTED" | "ANSWERED" | "ENROLLED";
+export type ContactOutcome = "UNANSWERED" | "NOT_INTERESTED" | "INTERESTED_LINK_SENT_NOT_REGISTERED" | "BUSY_RECALL_REQUESTED" | "ANSWERED" | "ENROLLED" | "NEEDS_JOB";
 
-export type TaskType = "FOLLOW_UP" | "RECALL" | "COLLECT_DETAILS" | "AVAILABILITY_CHECK" | "INTERVIEW_REMINDER" | "OFFER_FOLLOW_UP" | "RETENTION_CHECK" | "GENERAL";
+export type TaskType = "FOLLOW_UP" | "RECALL" | "COLLECT_DETAILS" | "AVAILABILITY_CHECK" | "INTERVIEW_REMINDER" | "OFFER_FOLLOW_UP" | "RETENTION_CHECK" | "REENGAGE_REPLY" | "COLD_CALL" | "GENERAL";
 
 export type TaskStatus = "OPEN" | "DONE" | "CANCELLED";
 
@@ -158,6 +169,13 @@ export interface Candidate {
   enrolledAt: Date | null;
   scrutinizedAt: Date | null;
   scrutinizedById: string | null;
+  allocatedAt: Date | null;
+  allocatedById: string | null;
+  lastPlatformVisitAt: Date | null;
+  jobIntentAt: Date | null;
+  lastEngagedAt: Date | null;
+  reengageSentAt: Date | null;
+  coldCallAllocatedAt: Date | null;
   createdById: string | null;
   createdAt: Date;
   lastUpdated: Date;
@@ -184,6 +202,10 @@ export interface ContactAttempt {
   outcome: ContactOutcome;
   isFirstTimeVerifiedCall: boolean;
   linkSent: boolean;
+  /**
+   * Team 2 cold-lead re-engagement call (not Team 1 outreach); direction RECALL = a re-attempt
+   */
+  coldCall: boolean;
   notes: string | null;
   nextFollowupAt: Date | null;
   byUserId: string | null;
@@ -316,6 +338,9 @@ export interface Vacancy {
   routedTeam: TeamCode;
   recruiterId: string | null;
   sourcerId: string | null;
+  taLeadId: string | null;
+  description: string | null;
+  mandatoryAttributes: string | null;
   wasPending: boolean;
   sourcingCompletedAt: Date | null;
   closedAt: Date | null;
@@ -507,6 +532,20 @@ export interface Message {
   error: string | null;
   sentById: string | null;
   createdAt: Date;
+}
+
+/**
+ * Inbound WhatsApp messages (replies to the re-engagement message), from the WhatsApp Cloud webhook.
+ */
+export interface InboundMessage {
+  id: string;
+  candidateId: string | null;
+  channel: Channel;
+  fromLast4: string;
+  body: string;
+  intent: JobIntent;
+  providerRef: string;
+  receivedAt: Date;
 }
 
 export interface AppSetting {

@@ -8,7 +8,9 @@ export type JobType =
   | "mark_pending_vacancies"
   | "red_flag_due_alerts"
   | "freeze_kpis"
-  | "purge_auth_sessions";
+  | "purge_auth_sessions"
+  | "engagement_sweep"
+  | "reengage_whatsapp";
 
 /**
  * Write a job to the `scheduled_jobs` outbox — pass the caller's transaction so

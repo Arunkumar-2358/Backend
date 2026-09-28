@@ -6,6 +6,8 @@ import { PushModule } from "./push/push.controller";
 import { NotificationsModule } from "./notifications/notifications.controller";
 import { LeadsModule } from "./candidates/candidates.controller";
 import { OutreachModule } from "./outreach/outreach.controller";
+import { EngagementModule } from "./engagement/engagement.controller";
+import { ColdCallsModule } from "./coldcalls/coldcalls.controller";
 import { ProfileModule } from "./users/users.controller";
 import { VacanciesModule } from "./vacancies/vacancies.controller";
 import { EvaluationsModule } from "./eval/eval.controller";
@@ -27,6 +29,8 @@ export const domainModules = [
   NotificationsModule,
   LeadsModule,
   OutreachModule,
+  EngagementModule,
+  ColdCallsModule,
   ProfileModule,
   VacanciesModule,
   EvaluationsModule,
