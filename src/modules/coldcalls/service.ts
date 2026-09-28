@@ -66,17 +66,17 @@ export async function allocateColdCalls(actor: Actor, input: AllocateColdCallsIn
     };
     const take = input.ids?.length ? undefined : Math.min(500, Math.max(1, Math.round(input.count ?? 500)));
     // Most recently engaged first: they are the likeliest to pick up.
-    const leads = await tx.candidate.findMany({ where, select: { id: true, lastEngagedAt: true }, orderBy: [{ lastEngagedAt: { sort: "desc", nulls: "last" } }, { candidateCode: "asc" }], take });
+    const leads = await tx.candidate.findMany({ where, select: { id: true }, orderBy: [{ lastEngagedAt: { sort: "desc", nulls: "last" } }, { candidateCode: "asc" }], take });
     if (!leads.length) throw new ValidationError("No cold leads are waiting for a call there");
 
     const at = now();
-    // Conditional claim: skip a lead a concurrent allocation already took for this cold spell.
+    // Conditional claim: re-check the live cold-pool conditions (not the stale selection above), so a
+    // lead that visited or was claimed by a concurrent allocation between the select and this update is
+    // skipped rather than getting a call task for a lead that is no longer cold / already spoken for.
+    const pool = await coldPoolWhere(tx);
     let claimed = 0;
     for (const lead of leads) {
-      const { count } = await tx.candidate.updateMany({
-        where: { id: lead.id, OR: [{ coldCallAllocatedAt: null }, { coldCallAllocatedAt: { lt: lead.lastEngagedAt ?? new Date(0) } }] },
-        data: { coldCallAllocatedAt: at },
-      });
+      const { count } = await tx.candidate.updateMany({ where: { AND: [{ id: lead.id }, pool] }, data: { coldCallAllocatedAt: at } });
       if (!count) continue;
       claimed++;
       await createTask(actor, { type: "COLD_CALL", title: "Cold lead call: ask if they need a job", candidateId: lead.id, assigneeId: caller.id, dueAt: at, notify: false }, tx);
