@@ -233,6 +233,20 @@ describe("cold leads: re-engagement WhatsApp and replies", () => {
     expect((await prisma.scheduledJob.findUniqueOrThrow({ where: { dedupeKey: `reengage:${newer}` } })).status).toBe("FAILED");
   });
 
+  it("a FAILED job from an earlier cold spell doesn't block a fresh message in a later one", async () => {
+    const id = await coldLead();
+    // A permanently-failed job from that first spell, never cleaned up.
+    await prisma.scheduledJob.create({ data: { type: "reengage_whatsapp", runAt: now(), payload: { candidateId: id }, dedupeKey: `reengage:${id}`, status: "FAILED", attempts: 5 } });
+    // The lead visits (a new spell begins) and later goes cold again.
+    advanceClock(DAY);
+    await recordPlatformVisits([{ mobile: await mobileOf(id) }]);
+    advanceClock(61 * DAY);
+    expect(await queueColdReengagements()).toBe("1 re-engagement message(s) queued");
+    await runDueJobs();
+    expect(reengagements()).toHaveLength(1);
+    expect((await lead(id)).reengageSentAt).not.toBeNull();
+  });
+
   it("only the owner or Team 2 leader can confirm a job need", async () => {
     const { id } = await driveTo("ACTIVE");
     await expect(markJobIntent(await as("amos"), id, undefined)).rejects.toThrow(/Team 2/);

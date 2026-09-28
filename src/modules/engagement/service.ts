@@ -116,15 +116,21 @@ export async function queueColdReengagements(db: Tx = prisma) {
   const t = now();
   const cold = engagementWindow("COLD", t, tierDays(s));
   // Excludes a lead whose job is still in flight (PENDING/QUEUED/RUNNING) or already gave up (FAILED)
-  // — scheduleJob's upsert would otherwise reset its status and attempts to 0 every sweep, letting a
-  // permanently failing send (bad number, provider rejection) retry forever on our quota — and does
-  // this *before* the daily limit, so a run of stuck leads can't crowd genuinely-fresh ones out of it.
+  // for the *current* cold spell — scheduleJob's upsert would otherwise reset its status and attempts
+  // to 0 every sweep, letting a permanently failing send (bad number, provider rejection) retry forever
+  // on our quota — and does this *before* the daily limit, so a run of stuck leads can't crowd
+  // genuinely-fresh ones out of it. `runAt` is bumped every time this dedupeKey is (re)scheduled, so a
+  // job whose runAt predates the lead's latest engagement is from an earlier, since-ended spell and does
+  // not block a fresh attempt now.
   const leads = await db.$queryRaw<{ id: string }[]>`
     SELECT id FROM candidates c
     WHERE stage::text = ANY(${ENGAGEMENT_STAGES}) AND "anonymizedAt" IS NULL
       AND ("lastEngagedAt" IS NULL OR "lastEngagedAt" < ${cold.to})
       AND ("reengageSentAt" IS NULL OR "reengageSentAt" < COALESCE("lastEngagedAt", 'epoch'::timestamp))
-      AND NOT EXISTS (SELECT 1 FROM scheduled_jobs sj WHERE sj."dedupeKey" = 'reengage:' || c.id AND sj.status <> 'DONE')
+      AND NOT EXISTS (
+        SELECT 1 FROM scheduled_jobs sj
+        WHERE sj."dedupeKey" = 'reengage:' || c.id AND sj.status <> 'DONE' AND sj."runAt" >= COALESCE(c."lastEngagedAt", 'epoch'::timestamp)
+      )
     ORDER BY "lastEngagedAt" DESC NULLS LAST
     LIMIT ${Math.max(0, s.reengageDailyLimit)}`;
   let queued = 0;

@@ -10,7 +10,7 @@ import { now, HOUR } from "@/lib/clock";
 import { audit } from "@/lib/audit";
 import { getAllSettings } from "@/lib/settings";
 import { ValidationError } from "@/lib/errors";
-import { type Actor, ForbiddenError, actorId, actorLabel, hasRole } from "@/lib/rbac";
+import { type Actor, ForbiddenError, actorId, actorLabel, hasRole, leadScope } from "@/lib/rbac";
 import { ENGAGEMENT_STAGES } from "@contracts/shared/engagement";
 import { closeTasks, createTask } from "@/modules/tasks/service";
 import { notify } from "@/modules/notifications/service";
@@ -57,8 +57,14 @@ export async function allocateColdCalls(actor: Actor, input: AllocateColdCallsIn
     });
     if (!caller) throw new ValidationError("Pick an active Team 2 member to call");
 
+    // `canAllocateColdCalls` already restricts this whole function to the Team 2 leader and admin, both
+    // of whom already see every Qualified/Active lead through `leadScope` (leader via stagesOwnedBy, admin
+    // via canReadAll), so this makes no difference to who can be selected today — kept as a scope guard
+    // against a future loosening of that role gate (e.g. letting a sourcer allocate their own calls).
+    const scope = leadScope(actor);
     const where: Prisma.CandidateWhereInput = {
       AND: [
+        scope,
         await coldPoolWhere(tx),
         input.ids?.length ? { id: { in: input.ids } } : {},
         input.category ? { mainCategory: input.category === "NONE" ? null : input.category } : {},
@@ -76,7 +82,7 @@ export async function allocateColdCalls(actor: Actor, input: AllocateColdCallsIn
     const pool = await coldPoolWhere(tx);
     let claimed = 0;
     for (const lead of leads) {
-      const { count } = await tx.candidate.updateMany({ where: { AND: [{ id: lead.id }, pool] }, data: { coldCallAllocatedAt: at } });
+      const { count } = await tx.candidate.updateMany({ where: { AND: [scope, { id: lead.id }, pool] }, data: { coldCallAllocatedAt: at } });
       if (!count) continue;
       claimed++;
       await createTask(actor, { type: "COLD_CALL", title: "Cold lead call: ask if they need a job", candidateId: lead.id, assigneeId: caller.id, dueAt: at, notify: false }, tx);
