@@ -67,6 +67,9 @@ describe("HTTP platform", () => {
         "POST /v1/cron/run-jobs",
         "POST /v1/telephony/missed-call",
         "POST /v1/webhooks/nt-enrolment",
+        "POST /v1/webhooks/nt-activity",
+        "GET /v1/webhooks/whatsapp",
+        "POST /v1/webhooks/whatsapp",
       ].sort(),
     );
   });

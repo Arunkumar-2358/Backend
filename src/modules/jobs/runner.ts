@@ -30,7 +30,7 @@ export const STALE_QUEUED_MS = 10 * MINUTE;
 /** RUNNING longer than this ⇒ the process died mid-job (handler transactions time out after 60s). */
 export const STALE_RUNNING_MS = 15 * MINUTE;
 
-export const RECURRING_JOBS = ["mark_pending_vacancies", "red_flag_due_alerts", "freeze_kpis", "purge_auth_sessions"] as const satisfies readonly JobType[];
+export const RECURRING_JOBS = ["mark_pending_vacancies", "red_flag_due_alerts", "freeze_kpis", "purge_auth_sessions", "engagement_sweep"] as const satisfies readonly JobType[];
 
 export type JobResult = { id: string; type: string; result: string };
 export type JobOutcome = "done" | "retry" | "failed" | "no_handler";

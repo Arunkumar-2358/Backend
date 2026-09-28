@@ -86,6 +86,8 @@ tests/                  service-level suites + tests/http (auth, RBAC, endpoints
 | Integration | Endpoint | Auth |
 |---|---|---|
 | NT platform enrolment | `POST /v1/webhooks/nt-enrolment` | `x-nt-signature` = hex HMAC-SHA256 of the raw body with `NT_WEBHOOK_SECRET` |
+| NT platform / app visits (engagement tiers) | `POST /v1/webhooks/nt-activity` — `{ mobile, visitedAt? }` or `{ visits: [...] }` (≤ 1000) | `x-nt-signature`, as above |
+| WhatsApp replies (cold-lead re-engagement) | `GET` (verification) and `POST /v1/webhooks/whatsapp` — WhatsApp Cloud API webhook | `hub.verify_token` = `WHATSAPP_VERIFY_TOKEN`; `x-hub-signature-256` with `WHATSAPP_APP_SECRET` |
 | Telephony missed calls (Exotel-style) | `POST` or `GET /v1/telephony/missed-call?token=…` | `TELEPHONY_WEBHOOK_TOKEN` |
 | Scheduler (serverless alternative to the worker) | `POST /v1/cron/run-jobs` | `x-cron-secret` or `Bearer` `CRON_SECRET` |
 | WhatsApp / SMS | `MESSAGING_PROVIDER=live` + `WHATSAPP_*` / `MSG91_*` | provider credentials |
@@ -96,6 +98,10 @@ The legacy URLs `/api/webhooks/*`, `/api/telephony/*` and `/api/cron/*` on the w
 ## Business rules that matter
 
 - **`transitionLead(actor, leadId, toStage, payload)` is the only way a stage changes.** It enforces the stage graph, the performer rule and the gate, writes `lead_stage_history` (with an owner snapshot for KPI credit) and `audit_log`, and fires side effects in the same transaction.
+- **Qualified leads go to Team 3 first.** The Team 3 leader allocates each one, by category, to a Team 2 sourcer (`/v1/allocation`); only then do availability check-ins start and can the lead become Active.
+- **Engagement tiers** (super active ≤ 5 days, active ≤ 14, warm ≤ 60, cold beyond; configurable) come from `last_engaged_at` = latest of enrolment, NT platform visit and confirmed job need. Cold leads get one re-engagement WhatsApp per cold spell; a "yes, I need a job" reply makes them super active immediately. See `contracts/shared/engagement.ts` and `modules/engagement`.
+- **Cold-lead calls:** the Team 2 leader allocates cold leads to a Team 2 member to call (`/v1/cold-calls`); "needs a job" makes the lead super active, no answer comes back as a recall (capped). Runs alongside the re-engagement WhatsApp.
+- **Daily dashboard** (`/v1/kpi/daily`, Excel at `/v1/kpi/daily/export`): the TA team 1 / 2 monthly workbooks computed from events — layout in `contracts/shared/daily-dashboard.ts`, formulas in `src/kpi/daily.ts`.
 - **Every automated or PII-touching action is audited** (`audit_log`), including PII views and exports.
 - **Contact details are encrypted at rest** (AES-256-GCM) with HMAC blind indexes for dedupe.
 - **KPIs are computed from events**; snapshots freeze at period end and raise automatic red flags against `kpi_targets`.

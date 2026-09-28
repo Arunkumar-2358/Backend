@@ -7,8 +7,10 @@ import { SYSTEM } from "@/lib/rbac";
 import { formatDateTime, istDateKey, startOfIstDay } from "@contracts/shared/dates";
 import { ensureOpenTask, createTask } from "@/modules/tasks/service";
 import { sendTemplate } from "@/modules/messaging/service";
-import { notify } from "@/modules/notifications/service";
+import { notify, usersWithRole } from "@/modules/notifications/service";
 import { purgeDeadSessions } from "@/modules/auth/sessions";
+import { queueColdReengagements, runReengagementJob } from "@/modules/engagement/service";
+import { coldPoolWhere } from "@/modules/coldcalls/service";
 import { scheduleJob } from "./queue";
 
 const sys = SYSTEM("scheduler");
@@ -21,6 +23,7 @@ export const HANDLERS: Record<string, Handler> = {
     const { candidateId } = job.payload as { candidateId: string };
     const lead = await db.candidate.findUnique({ where: { id: candidateId } });
     if (!lead || lead.stage !== "QUALIFIED") return "skipped: not qualified";
+    if (!lead.allocatedAt) return "skipped: awaiting Team 3 allocation";
     await ensureOpenTask(sys, { type: "AVAILABILITY_CHECK", title: `Availability check-in${lead.isCold ? " (cold lead)" : ""}`, candidateId, assigneeId: lead.ownerUserId, dueAt: now() }, db);
     const s = await getAllSettings(db);
     await scheduleJob("availability_check", new Date(now().getTime() + s.availabilityCheckIntervalDays * DAY), { candidateId }, `avail:${candidateId}`, db);
@@ -117,6 +120,24 @@ export const HANDLERS: Record<string, Handler> = {
     await scheduleJob("freeze_kpis", nextRun, {}, "freeze_kpis", db);
     return out;
   },
+  /** Daily 10:00 IST: queue the re-engagement WhatsApp for leads that went cold (no visit beyond the warm window). */
+  async engagement_sweep(_job, db) {
+    const out = await queueColdReengagements(db);
+    // Cold leads also go to Team 2 for a call; remind the leader to allocate them.
+    const waiting = await db.candidate.count({ where: await coldPoolWhere(db) });
+    if (waiting) {
+      await notify(await usersWithRole(["team2_leader"], undefined, db), { kind: "TASK", title: `${waiting} cold lead${waiting === 1 ? "" : "s"} waiting to be called`, body: "Allocate them to Team 2 for a cold-lead call", link: "/cold-calls" }, db);
+    }
+    await scheduleJob("engagement_sweep", new Date(startOfIstDay(now()).getTime() + DAY + 10 * HOUR), {}, "engagement_sweep", db);
+    return `${out}; ${waiting} cold lead(s) waiting for a call`;
+  },
+
+  /** One cold lead's re-engagement WhatsApp (its own job, so a provider failure retries just this send). */
+  async reengage_whatsapp(job, db) {
+    const { candidateId } = job.payload as { candidateId: string };
+    return runReengagementJob(candidateId, db);
+  },
+
   /** Daily 03:00 IST: delete auth sessions that expired / were revoked more than 30 days ago. */
   async purge_auth_sessions(_job, db) {
     const { count } = await purgeDeadSessions(30, db);

@@ -69,10 +69,13 @@ export const RULES: Record<string, Rule> = {
   },
   "QUALIFIED->ACTIVE": {
     performer: "stage_team",
-    description: "Latest availability check-in confirmed the candidate is available",
+    description: "Allocated to a Team 2 sourcer by the Team 3 leader; latest availability check-in confirmed the candidate is available",
     gate: async ({ db, lead }) => {
+      const f: string[] = [];
+      if (!lead.allocatedAt) f.push("Not yet allocated to a Team 2 sourcer by the Team 3 leader");
       const last = await db.availabilityCheck.findFirst({ where: { candidateId: lead.id }, orderBy: { checkedAt: "desc" } });
-      return last?.available ? [] : ["Latest availability check-in has not confirmed availability"];
+      if (!last?.available) f.push("Latest availability check-in has not confirmed availability");
+      return f;
     },
   },
   "ACTIVE->SOURCED": {

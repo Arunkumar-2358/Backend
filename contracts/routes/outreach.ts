@@ -91,6 +91,8 @@ export interface AvailabilityView {
   pageSize: number;
   /** availabilityCheckIntervalDays setting. */
   interval: number;
+  /** Qualified leads still waiting for the Team 3 leader to allocate them to Team 2. */
+  awaitingAllocation: number;
   weekStart: Date;
   monthStart: Date;
   dueTasks: (Pick<Task, "id" | "dueAt"> & { candidate: AvailabilityLead })[];

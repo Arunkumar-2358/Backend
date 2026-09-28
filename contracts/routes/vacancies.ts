@@ -62,6 +62,8 @@ export interface VacancyDetail {
     clientOrg: ClientOrg;
     recruiter: Pick<User, "name"> | null;
     sourcer: Pick<User, "name"> | null;
+    /** Team 1a TA lead given the posting to source portal CVs. */
+    taLead: Pick<User, "name"> | null;
     submissions: VacancySubmissionRow[];
   };
   stats: SourcingStats;
@@ -110,6 +112,8 @@ export interface VacancyRoutes {
       maxNoticeDays?: number;
       openings?: number;
       postedAt?: Date;
+      description?: string;
+      mandatoryAttributes?: string;
     };
     response: MessageResult & { id: string };
   };

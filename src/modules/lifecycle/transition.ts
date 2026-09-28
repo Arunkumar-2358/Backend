@@ -1,15 +1,15 @@
 import type { Stage, TeamCode } from "@prisma/client";
 import { prisma, withTx, type Tx } from "@/lib/db";
-import { now, DAY } from "@/lib/clock";
+import { now } from "@/lib/clock";
 import { audit } from "@/lib/audit";
 import { getAllSettings } from "@/lib/settings";
 import { GateError } from "@/lib/errors";
 import { type Actor, ForbiddenError, actorId, isAdmin, isStageLeader, isStageTeamMember } from "@/lib/rbac";
 import { pickAssignee } from "@/modules/users/assignment";
 import { cancelOpenTasksForLead, ensureOpenTask } from "@/modules/tasks/service";
-import { cancelJobs, scheduleJob } from "@/modules/jobs/queue";
+import { cancelJobs } from "@/modules/jobs/queue";
 import { recomputeCompleteness } from "@/modules/candidates/service";
-import { notify, isBulkActor } from "@/modules/notifications/service";
+import { notify, isBulkActor, usersWithRole } from "@/modules/notifications/service";
 import { EXIT_STAGES, STAGE_LABEL, allowedTargets, ruleFor, type TransitionPayload } from "./rules";
 
 export type TransitionResult = { from: Stage; to: Stage; historyId: string };
@@ -93,7 +93,6 @@ async function routeTo(team: TeamCode, leadId: string, tx: Tx) {
 
 async function sideEffects(actor: Actor, leadId: string, to: Stage, payload: TransitionPayload, tx: Tx) {
   const at = now();
-  const settings = await getAllSettings(tx);
 
   if (EXIT_STAGES.includes(to)) {
     await cancelOpenTasksForLead(leadId, `Lead moved to ${STAGE_LABEL[to]}`, tx);
@@ -115,7 +114,9 @@ async function sideEffects(actor: Actor, leadId: string, to: Stage, payload: Tra
     }
     case "ENROLLED": {
       await cancelOpenTasksForLead(leadId, "Enrolled", tx, ["FOLLOW_UP", "RECALL"]);
-      await tx.candidate.update({ where: { id: leadId }, data: { enrolledAt: at, nextFollowupAt: null } });
+      // Registering on the NT platform is the lead's first engagement signal.
+      const prev = await tx.candidate.findUniqueOrThrow({ where: { id: leadId }, select: { lastEngagedAt: true } });
+      await tx.candidate.update({ where: { id: leadId }, data: { enrolledAt: at, nextFollowupAt: null, lastEngagedAt: prev.lastEngagedAt && prev.lastEngagedAt > at ? prev.lastEngagedAt : at } });
       // Missed-call funnel: a recalled caller who registers counts as enrolled.
       await tx.missedCall.updateMany({ where: { candidateId: leadId, recallAttemptedAt: { not: null } }, data: { enrolled: true, closedAt: at } });
       const owner = await routeTo("T2", leadId, tx);
@@ -140,10 +141,14 @@ async function sideEffects(actor: Actor, leadId: string, to: Stage, payload: Tra
           tlRemarks: payload.tlRemark ?? lead.tlRemarks,
           scrutinizedAt: lead.scrutinizedAt ?? at,
           scrutinizedById: lead.scrutinizedById ?? actorId(actor),
+          // Waits in the Team 3 leader's pool; allocation to a Team 2 sourcer starts the check-ins.
+          allocatedAt: null,
+          allocatedById: null,
         },
       });
-      await ensureOpenTask(actor, { type: "AVAILABILITY_CHECK", title: "Availability check-in", candidateId: leadId, assigneeId: lead.ownerUserId, dueAt: at }, tx);
-      await scheduleJob("availability_check", new Date(at.getTime() + settings.availabilityCheckIntervalDays * DAY), { candidateId: leadId }, `avail:${leadId}`, tx);
+      if (!isBulkActor(actor)) {
+        await notify(await usersWithRole(["team3_leader"], undefined, tx), { kind: "LEAD_ASSIGNED", title: `Qualified lead to allocate: ${lead.name}`, body: `${lead.candidateCode}${lead.mainCategory ? ` · ${lead.mainCategory.toLowerCase()}` : ""} — assign it to a Team 2 sourcer`, link: "/allocation" }, tx, actor);
+      }
       break;
     }
     case "ACTIVE": {

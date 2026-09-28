@@ -65,6 +65,7 @@ export async function recordAvailabilityCheck(actor: Actor, candidateId: string,
     const lead = await tx.candidate.findUniqueOrThrow({ where: { id: candidateId } });
     if (!isStageTeamMember(actor, "QUALIFIED")) throw new ForbiddenError("Only Team 2 records availability check-ins");
     if (lead.stage !== "QUALIFIED" && lead.stage !== "ACTIVE") throw new ValidationError("Availability check-ins apply to Qualified or Active leads");
+    if (lead.stage === "QUALIFIED" && !lead.allocatedAt) throw new ValidationError("This lead is waiting for the Team 3 leader to allocate it to a Team 2 sourcer");
     const check = await tx.availabilityCheck.create({
       data: { candidateId, available, wasCold: lead.isCold, byUserId: actorId(actor), notes, checkedAt: now() },
     });

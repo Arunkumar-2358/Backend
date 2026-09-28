@@ -24,7 +24,7 @@ export async function listVacancies(actor: Extract<Actor, { kind: "user" }>, sp:
     ...((MAIN_CATEGORIES as readonly string[]).includes(sp.category ?? "") ? { category: sp.category as MainCategory } : {}),
     ...(TEAMS.includes(sp.team as TeamCode) ? { routedTeam: sp.team as TeamCode } : {}),
     ...(sp.org ? { clientOrgId: sp.org } : {}),
-    ...(sp.mine ? { OR: [{ recruiterId: actor.id }, { sourcerId: actor.id }] } : {}),
+    ...(sp.mine ? { OR: [{ recruiterId: actor.id }, { sourcerId: actor.id }, { taLeadId: actor.id }] } : {}),
   };
   const where: Prisma.VacancyWhereInput = search ? { AND: [filters, search] } : filters;
   const [total, vacancies, orgs, settings] = await Promise.all([
@@ -58,6 +58,7 @@ export async function vacancyDetail(id: string): Promise<VacancyDetail> {
       clientOrg: true,
       recruiter: { select: { name: true } },
       sourcer: { select: { name: true } },
+      taLead: { select: { name: true } },
       submissions: {
         include: {
           candidate: { select: { id: true, name: true, candidateCode: true, stage: true } },

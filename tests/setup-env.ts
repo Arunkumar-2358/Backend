@@ -9,3 +9,5 @@ process.env.VAPID_SUBJECT ??= "mailto:test@example.com";
 process.env.TELEPHONY_WEBHOOK_TOKEN ??= "test-telephony-token";
 process.env.CRON_SECRET ??= "test-cron-secret";
 process.env.UPLOAD_DIR ??= "./storage/test";
+process.env.WHATSAPP_VERIFY_TOKEN ??= "test-wa-verify-token";
+process.env.WHATSAPP_APP_SECRET ??= "test-wa-app-secret";

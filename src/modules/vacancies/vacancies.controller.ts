@@ -73,6 +73,8 @@ export class VacanciesController {
       maxNoticeDays: optNum,
       openings: optNum,
       postedAt: z.coerce.date().optional(),
+      description: z.string().trim().max(4000).optional(),
+      mandatoryAttributes: z.string().trim().max(2000).optional(),
     }),
   })
   async postVacancies({ actor, body }: Ctx<"POST /v1/vacancies">) {
@@ -94,6 +96,8 @@ export class VacanciesController {
       maxNoticeDays: body.maxNoticeDays ?? null,
       openings: Math.max(1, Math.round(body.openings ?? 1)),
       postedAt: body.postedAt,
+      description: body.description || null,
+      mandatoryAttributes: body.mandatoryAttributes || null,
     });
     return { message: `Created ${v.code}`, id: v.id };
   }

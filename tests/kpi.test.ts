@@ -13,6 +13,9 @@ import { KPI_DEFINITIONS, SHEETS, type Sheet } from "@/kpi/definitions";
 import { computeSheetTable } from "@/kpi/engine";
 import { freezePeriod } from "@/kpi/snapshots";
 import { kpiWorkbook } from "@/kpi/export";
+import { buildDaily, dailyWorkbook } from "@/kpi/daily";
+import { computeSheet } from "@/kpi/engine";
+import { dailyMetrics } from "@contracts/shared/daily-dashboard";
 import { createCandidate } from "@/modules/candidates/service";
 import { transitionLead } from "@/modules/lifecycle/transition";
 import { logContact, allocateToTelecaller, logMissedCall, recordRecall } from "@/modules/outreach/service";
@@ -21,6 +24,7 @@ import { submitCandidate, decideSubmission } from "@/modules/vacancies/service";
 import { scheduleInterview, recordInterviewOutcome, sendOffer, confirmJoiningDate, recordJoining, completeFormalities, recordRetentionCheck } from "@/modules/interviews/service";
 import { runImport, autoMap } from "@/modules/import/pipeline";
 import { raiseRedFlag, suggestCapa, implementCapa, verifyAndClose } from "@/modules/redflags/service";
+import { allocateColdCalls, logColdCall } from "@/modules/coldcalls/service";
 import { decrypt } from "@/lib/crypto";
 import { resetDb, as, userId, completeProfile } from "./helpers";
 import { driveTo, makeVacancy } from "./drive";
@@ -39,6 +43,10 @@ beforeAll(async () => {
   await setSetting("cvTargetPerVacancy", 2);
   const pharm = { mainCategory: "PHARMACY" as const, jobTitle: "Pharmacist", primarySpecialty: "Retail" };
   const pharmVac = { category: "PHARMACY" as const, title: "Pharmacist", specialty: "Retail", location: "Hyderabad" };
+
+  // ── Cold leads: enrolled in June, so > 60 days without engagement by W ──
+  at("2026-06-15T04:30:00Z");
+  const X = [await driveTo("ACTIVE"), await driveTo("ACTIVE"), await driveTo("ACTIVE")];
 
   // ── P0: chain L joins 23-08, day-7 on 30-08; day-30 falls inside W ──
   at("2026-08-20T04:30:00Z");
@@ -90,6 +98,9 @@ beforeAll(async () => {
   await scrutinize(await as("srividya"), B[0].id);
   await scrutinize(await as("srividya"), N1.id);
   await verifyAndQualify(await as("dixha"), B[0].id, "ok");
+  at("2026-09-21T06:00:00Z"); // follow-up call on the interested (Bb) lead: enrols on the re-attempt
+  await logContact(jen, B[2].id, { channel: "CALL", outcome: "ENROLLED" });
+  at("2026-09-21T04:30:00Z");
 
   // Team 1b: Bhavani
   const P = [];
@@ -121,6 +132,17 @@ beforeAll(async () => {
   at("2026-09-22T04:30:00Z");
   await recordAvailabilityCheck(sv, A4.id, true, undefined); // cold → warm → Active
   await submitCandidate(sv, V1.id, A4.id); // V1 completes (was pending)
+
+  // Team 2: cold-lead calls — Dixha allocates the three cold leads to Sri Vidya
+  at("2026-09-23T04:30:00Z");
+  await allocateColdCalls(await as("dixha"), { callerId: await userId("srividya"), ids: X.map((x) => x.id) });
+  at("2026-09-23T05:00:00Z");
+  await logColdCall(sv, X[0].id, { outcome: "UNANSWERED" });
+  await logColdCall(sv, X[1].id, { outcome: "NEEDS_JOB" });
+  await logColdCall(sv, X[2].id, { outcome: "NOT_INTERESTED" });
+  at("2026-09-24T05:00:00Z");
+  await logColdCall(sv, X[0].id, { outcome: "NEEDS_JOB" }); // the recall
+  at("2026-09-22T04:30:00Z");
 
   // Mismatched qualified: doctor qualified in W, CV rejected
   const Q1 = await driveTo("ACTIVE", { mainCategory: "DOCTOR", jobTitle: "Consultant", primarySpecialty: "Cardiology", preferredLocations: ["Bengaluru"] });
@@ -179,18 +201,34 @@ const EXPECTED: Record<string, number | null> = {
   // Team 1a — Jennifer
   "t1a.working_days": 5,
   "t1a.validated_assigned": 4,
-  "t1a.enrolled_from_validated": 1,
+  "t1a.enrolled_from_validated": 2,
   "t1a.nonnt_downloaded": 2,
   "t1a.enrolled_nonnt": 1,
-  "t1a.total_enrolled": 2,
+  "t1a.total_enrolled": 3,
   "t1a.enrolled_screened": 2,
-  "t1a.pct_screened": 100,
+  "t1a.pct_screened": 66.7,
   "t1a.approved": 1,
   "t1a.pct_approved": 50,
-  "t1a.pct_enrolled_from_validated": 25,
+  "t1a.pct_enrolled_from_validated": 50,
   "t1a.pct_enrolled_nonnt": 50,
-  "t1a.calls_attempted": 4,
+  "t1a.calls_attempted": 5,
   "t1a.unanswered_calls": 2,
+  // daily dashboard — validated leads: B0 enrolled on the first call, B1 unanswered, B2 Bb then enrolled on the follow-up, B3 Bc
+  "t1a.leads_attempted": 4,
+  "t1a.leads_answered": 3,
+  "t1a.leads_interested": 2,
+  "t1a.enrolled_first_attempt": 1,
+  "t1a.followups_done": 1,
+  "t1a.enrolled_reattempted": 1,
+  "t1a.nt_screened": 1, // B0 (B2 not scrutinised yet)
+  "t1a.nt_approved": 1,
+  // job postings: V2 and V3 are nurse postings (TA lead Jennifer); portal CVs N1 (Naukri) and N2 (LinkedIn)
+  "t1a.job_postings": 2,
+  "t1a.job_openings": 2,
+  "t1a.cvs_other_portals": 1,
+  "t1a.cvs_linkedin": 1,
+  "t1a.portal_screened": 1, // N1
+  "t1a.portal_approved": 0,
   // Team 1b — Bhavani
   "t1b.working_days": 4,
   "t1b.ftc_allocated": 3,
@@ -213,7 +251,7 @@ const EXPECTED: Record<string, number | null> = {
   "t1b.mc_enrolled_over_links": 100,
   // Team 2 — Sri Vidya (CV target set to 2 for this fixture)
   "t2.working_days": 5,
-  "t2.enrolled_received": 2,
+  "t2.enrolled_received": 3,
   "t2.scrutinised": 2,
   "t2.qualified": 1,
   "t2.cold_to_warm": 1,
@@ -224,11 +262,27 @@ const EXPECTED: Record<string, number | null> = {
   "t2.vacancies_5_nonnt": 1,
   "t2.closed_pending": 1,
   "t2.avg_tat_minutes": 3880, // (11520 + 60 + 60) / 3
-  "t2.pct_scrutiny": 100,
-  "t2.pct_qualified": 50,
+  "t2.pct_scrutiny": 66.7,
+  "t2.pct_qualified": 33.3,
   "t2.pct_sourced_nt": 66.7,
   "t2.pct_sourced_nonnt": 33.3,
   "t2.avg_cvs_per_vacancy": 1.67,
+  // daily dashboard — job postings V2, V3; CVs A1, A2, A4 (NT) and A5, A6 (Naukri) submitted
+  "t2.job_postings": 2,
+  "t2.job_openings": 2,
+  "t2.cvs_nt": 3,
+  "t2.cvs_nonnt": 2,
+  "t2.cvs_to_team3": 5,
+  // cold-lead calls: X0 unanswered then needs a job on the recall, X1 needs a job, X2 not looking
+  "t2.cold_allocated": 3,
+  "t2.cold_attempted": 3,
+  "t2.cold_answered": 2,
+  "t2.cold_super_active": 1,
+  "t2.cold_recalled": 1,
+  "t2.cold_recall_answered": 1,
+  "t2.cold_recall_super_active": 1,
+  "t2.cold_super_active_total": 2,
+  "t2.pct_cold_super_active": 66.7,
   // Team 3a — Harsha
   "t3a.working_days": 6,
   "t3a.opening": 4,
@@ -280,7 +334,7 @@ const EXPECTED: Record<string, number | null> = {
   "t4da.import_accepted": 1,
   "t4da.funnel_mapping": 12,
   "t4da.funnel_validated": 12,
-  "t4da.funnel_enrolled": 5,
+  "t4da.funnel_enrolled": 6, // includes B2, enrolled on the follow-up
   "t4da.funnel_qualified": 2,
   "t4da.funnel_active": 2,
   "t4da.funnel_sourced": 6,
@@ -341,5 +395,70 @@ describe("team totals and snapshots", () => {
     expect(labels).toContain("Red flags noticed");
     expect(labels).toContain("Action taken");
     void DAY;
+  });
+});
+
+describe("daily dashboard (the TA team workbooks)", () => {
+  const day = (b: Awaited<ReturnType<typeof buildDaily>>, n: number) => b.days[n - 1];
+
+  it("TA team 1: Jennifer's day and week rows follow the workbook columns and formulas", async () => {
+    const b = await buildDaily("T1A", "2026-09", [await userId("jennifer")], { teamFlags: false });
+    expect(b.days).toHaveLength(30);
+    expect(day(b, 21).values).toMatchObject({
+      "a.allocated": 4, "a.attempted": 4, "a.answered": 3, "a.interested": 2,
+      "a.enrolled_first": 1, "a.followups": 1, "a.enrolled_reattempt": 1, "a.total_enrolled": 2,
+      "a.scrutinised": 1, "a.approved": 1,
+      "b.postings": 2, "b.vacancies": 2, "b.cvs_other": 1, "b.cvs_linkedin": 1, "b.shortlisted": 2,
+      "b.total_enrolled_cvs": 4, // the workbook's AE = shortlisted + total enrolled
+    });
+    expect(day(b, 21).postings.map((p) => p.title)).toEqual(["Staff Nurse – ICU", "Staff Nurse – ICU"]);
+    // Week 4 is Mon 21 – Sun 27 and equals the KPI engine over the same week.
+    const w4 = b.weeks[3];
+    expect(w4.label).toBe("Week 4");
+    const engine = await computeSheet("T1A", W.start, W.end, [await userId("jennifer")], prisma, dailyMetrics("T1A"));
+    expect(w4.values["a.attempted"]).toBe(engine["t1a.leads_attempted"]);
+    expect(w4.values["b.cvs_linkedin"]).toBe(engine["t1a.cvs_linkedin"]);
+    // The month total is the sum of the weeks; KPI rows divide the summed columns.
+    expect(b.total.values["a.allocated"]).toBe(b.weeks.reduce((a, w) => a + (w.values["a.allocated"] ?? 0), 0));
+    const k4 = b.kpis.find((k) => k.label === "Week 4")!;
+    expect(k4.values["a.k_attempted"]).toBe(100);
+    expect(k4.values["a.k_answered"]).toBe(75);
+    expect(k4.values["b.k_shortlisted"]).toBe(1); // 2 CVs / 2 openings
+    expect(b.kpis.at(-1)!.label).toBe("Monthly");
+    // Days after "today" (28-09 05:30 IST) are not computed.
+    expect(day(b, 28).future).toBe(false);
+    expect(day(b, 29).future).toBe(true);
+    expect(day(b, 29).values["a.allocated"]).toBeNull();
+  });
+
+  it("TA team 2: Sri Vidya's cold-lead calls, and team red flags on the consolidated view", async () => {
+    const b = await buildDaily("T2", "2026-09", [await userId("srividya")], { teamFlags: false });
+    expect(day(b, 23).values).toMatchObject({ "b.allocated": 3, "b.attempted": 3, "b.answered": 2, "b.super_active": 1, "b.recalled": 0 });
+    expect(day(b, 24).values).toMatchObject({ "b.recalled": 1, "b.recall_answered": 1, "b.recall_super_active": 1, "b.total_super_active": 1 });
+    expect(day(b, 21).values).toMatchObject({ "a.postings": 2, "a.cvs_nt": 2, "a.cvs_nonnt": 2, "a.shortlisted": 4, "a.to_team3": 4 });
+    const k4 = b.kpis.find((k) => k.label === "Week 4")!;
+    expect(k4.values["b.k_total_super_active"]).toBe(66.7); // 2 / (2 answered + 1 re-attempt answered)
+    expect(k4.values["b.k_recall_answered"]).toBe(100);
+    expect(day(b, 21).flags).toEqual([]); // the TAT-breach flag is team-level, not Sri Vidya's
+
+    const team = await buildDaily("T2", "2026-09", [await userId("srividya"), await userId("amos"), await userId("bhavya")], { teamFlags: true });
+    expect(day(team, 21).flags).toEqual([{ description: "TAT breach", action: "Fix", status: "CLOSED", tatHours: 78 }]);
+    const tk4 = team.kpis.find((k) => k.label === "Week 4")!;
+    expect(tk4.values).toMatchObject({ "a.flags_new": 1, "a.flags_closed": 1, "a.flags_days": 3.2 });
+  });
+
+  it("exports the month as the workbook: a tab per person plus Consolidated", async () => {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await dailyWorkbook("T2", "2026-09")) as unknown as ArrayBuffer);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Amos", "Bhavya", "Sri Vidya", "Consolidated"]);
+    const ws = wb.getWorksheet("Sri Vidya")!;
+    const header = ws.getRow(3).values as unknown[];
+    const col = header.indexOf("Number of allocated cold leads");
+    expect(col).toBeGreaterThan(0);
+    expect(ws.getRow(2).values).toContain("For the allocated cold leads");
+    expect(ws.getCell(3 + 23, col).value).toBe(3); // day 23
+    const labels: string[] = [];
+    ws.eachRow((row) => labels.push(String(row.getCell(1).value ?? "")));
+    expect(labels).toEqual(expect.arrayContaining(["Total", "Week 1", "Week 5", "Monthly", "KPI"]));
   });
 });

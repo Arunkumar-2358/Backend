@@ -191,6 +191,9 @@ export async function saveSettings(actor: Actor, fields: Record<string, string[]
     }
   }
   if (typeof next.enrolmentLinkTemplate === "string" && !next.enrolmentLinkTemplate.includes("{{code}}")) throw new ValidationError("The enrolment link template must contain {{code}}");
+  const tiers = next.engagementTierDays as Record<string, number> | undefined;
+  if (tiers && !(tiers.superActive > 0 && tiers.superActive < tiers.active && tiers.active < tiers.warm))
+    throw new ValidationError("Engagement tiers must increase: 0 < superActive < active < warm (days)");
   const diff: Record<string, { from: unknown; to: unknown }> = {};
   for (const [k, v] of Object.entries(next)) {
     if (JSON.stringify(current[k as SettingKey]) === JSON.stringify(v)) continue;

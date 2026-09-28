@@ -183,6 +183,12 @@ describe("HTTP: admin settings", () => {
     "followupHours.INTERESTED_LINK_SENT_NOT_REGISTERED": ["48"],
     "followupHours.BUSY_RECALL_REQUESTED": ["4"],
     availabilityCheckIntervalDays: ["60"],
+    "engagementTierDays.superActive": ["5"],
+    "engagementTierDays.active": ["14"],
+    "engagementTierDays.warm": ["60"],
+    reengageDailyLimit: ["200"],
+    coldCallMaxAttempts: ["3"],
+    coldCallRecallHours: ["24"],
     cvTargetPerVacancy: ["5"],
     cvMinTeam3bc: ["2"],
     interviewReminderOffsetsHours: ["24, 2"],
@@ -217,6 +223,8 @@ describe("HTTP: admin settings", () => {
     expect(link.json().error.message).toBe("The enrolment link template must contain {{code}}");
     const none = await call({ method: "PUT", url: "/v1/admin/settings", payload: { fields: form({ mandatorySopFields: [] }) }, as: "admin" });
     expect(none.json().error.message).toBe("Pick at least one mandatory SOP field");
+    const tiers = await call({ method: "PUT", url: "/v1/admin/settings", payload: { fields: form({ "engagementTierDays.active": ["3"] }) }, as: "admin" });
+    expect(tiers.json().error.message).toBe("Engagement tiers must increase: 0 < superActive < active < warm (days)");
   });
 });
 

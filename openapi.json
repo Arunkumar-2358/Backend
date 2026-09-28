@@ -1060,6 +1060,120 @@
         }
       }
     },
+    "/v1/allocation": {
+      "get": {
+        "tags": [
+          "allocation"
+        ],
+        "summary": "Qualified leads waiting for the Team 3 leader to allocate them to Team 2, by category",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "DOCTOR",
+                    "NURSE",
+                    "PHARMACY",
+                    "ALLIED",
+                    "ADMIN",
+                    "OTHER"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "NONE"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": true,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "allocation"
+        ],
+        "summary": "Allocate qualified leads (chosen ones, or a whole category) to a Team 2 sourcer",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sourcerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "maxItems": 500
+                  },
+                  "category": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "DOCTOR",
+                          "NURSE",
+                          "PHARMACY",
+                          "ALLIED",
+                          "ADMIN",
+                          "OTHER"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "NONE"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "sourcerId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/login": {
       "post": {
         "tags": [
@@ -1330,6 +1444,215 @@
         }
       }
     },
+    "/v1/cold-calls": {
+      "get": {
+        "tags": [
+          "cold-calls"
+        ],
+        "summary": "Open cold-lead calls (own, or the team's for the Team 2 leader) and the leader's allocation pool",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mine",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": true,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "DOCTOR",
+                    "NURSE",
+                    "PHARMACY",
+                    "ALLIED",
+                    "ADMIN",
+                    "OTHER"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "NONE"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/cold-calls/{id}/call": {
+      "get": {
+        "tags": [
+          "cold-calls"
+        ],
+        "summary": "Decrypted contact details for a cold-lead call (logged as a PII view)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/cold-calls/{id}/log": {
+      "post": {
+        "tags": [
+          "cold-calls"
+        ],
+        "summary": "Log a cold-lead call: no answer (→ recall), answered not looking, or needs a job (→ super active)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "UNANSWERED",
+                      "NOT_INTERESTED",
+                      "NEEDS_JOB"
+                    ]
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cold-calls/allocate": {
+      "post": {
+        "tags": [
+          "cold-calls"
+        ],
+        "summary": "Team 2 leader allocates cold leads (ticked ones, or the next N of a category) to a Team 2 member to call",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "callerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "maxItems": 500
+                  },
+                  "category": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "DOCTOR",
+                          "NURSE",
+                          "PHARMACY",
+                          "ALLIED",
+                          "ADMIN",
+                          "OTHER"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "NONE"
+                        ]
+                      }
+                    ]
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500
+                  }
+                },
+                "required": [
+                  "callerId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/cron/run-jobs": {
       "post": {
         "tags": [
@@ -1352,6 +1675,110 @@
         ],
         "summary": "Role dashboard: own tasks and leads, leader pipeline + weekly KPIs, coordinator and data-analyst panels",
         "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/engagement": {
+      "get": {
+        "tags": [
+          "engagement"
+        ],
+        "summary": "Qualified / Active leads by engagement tier (super active, active, warm, cold)",
+        "parameters": [
+          {
+            "name": "tier",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "SUPER_ACTIVE",
+                "ACTIVE",
+                "WARM",
+                "COLD"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": true,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/engagement/{id}/job-intent": {
+      "post": {
+        "tags": [
+          "engagement"
+        ],
+        "summary": "The candidate confirmed they need a job → Super active now",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/engagement/{id}/reengage": {
+      "post": {
+        "tags": [
+          "engagement"
+        ],
+        "summary": "Send the cold-lead re-engagement WhatsApp now",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -1949,6 +2376,84 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/kpi/daily": {
+      "get": {
+        "tags": [
+          "kpi"
+        ],
+        "summary": "Daily dashboard (the TA team 1 / 2 monthly workbooks): one person's month, or the team's for leaders",
+        "parameters": [
+          {
+            "name": "sheet",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 8
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 7
+            }
+          },
+          {
+            "name": "user",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/kpi/daily/export": {
+      "get": {
+        "tags": [
+          "kpi"
+        ],
+        "summary": "Daily dashboard workbook (.xlsx) for a month: a tab per person plus Consolidated, in the TA team workbook layout",
+        "parameters": [
+          {
+            "name": "sheet",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "T1A",
+                "T2"
+              ]
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 7
             }
           }
         ],
@@ -4169,6 +4674,8 @@
                 "INTERVIEW_REMINDER",
                 "OFFER_FOLLOW_UP",
                 "RETENTION_CHECK",
+                "REENGAGE_REPLY",
+                "COLD_CALL",
                 "GENERAL"
               ]
             }
@@ -4376,6 +4883,14 @@
                   "postedAt": {
                     "type": "string",
                     "format": "date-time"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  "mandatoryAttributes": {
+                    "type": "string",
+                    "maxLength": 2000
                   }
                 },
                 "additionalProperties": false
@@ -4679,12 +5194,55 @@
         }
       }
     },
+    "/v1/webhooks/nt-activity": {
+      "post": {
+        "tags": [
+          "integrations"
+        ],
+        "summary": "NT platform / app visits, for engagement tiers (x-nt-signature: HMAC-SHA256 of body)",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": []
+      }
+    },
     "/v1/webhooks/nt-enrolment": {
       "post": {
         "tags": [
           "integrations"
         ],
         "summary": "NT platform enrolment webhook (x-nt-signature: HMAC-SHA256 of body)",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/webhooks/whatsapp": {
+      "get": {
+        "tags": [
+          "integrations"
+        ],
+        "summary": "WhatsApp Cloud API webhook verification (hub.verify_token = WHATSAPP_VERIFY_TOKEN)",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": []
+      },
+      "post": {
+        "tags": [
+          "integrations"
+        ],
+        "summary": "WhatsApp Cloud API inbound messages (x-hub-signature-256: HMAC-SHA256 with WHATSAPP_APP_SECRET)",
         "parameters": [],
         "responses": {
           "200": {

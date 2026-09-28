@@ -8,6 +8,7 @@ import { hasRole, ForbiddenError } from "@/lib/rbac";
 import { notFound } from "@/lib/http-errors";
 import { RawEndpoint, type RawCtx, type UserActor } from "@/platform/endpoint";
 import { kpiWorkbook } from "@/kpi/export";
+import { dailyWorkbook, parseDailyExport, monthLabel } from "@/kpi/daily";
 import { canExportKpis, parsePeriod } from "@/kpi/access";
 import { evaluationWorkbook } from "@/modules/eval/service";
 import { rejectsWorkbook } from "@/modules/import/pipeline";
@@ -30,6 +31,20 @@ export class ExportsController {
     const buf = await kpiWorkbook(p.periodType, p.anchor);
     const name = `${p.periodType === "WEEK" ? "Weekly" : "Monthly"}-analysis-${formatDate(p.start)}.xlsx`;
     await audit(actor, "EXPORT", "kpi_workbook", `${p.periodType}:${p.start.toISOString()}`, { periodType: p.periodType, start: p.start, end: p.end, file: name });
+    return sendXlsx(reply, buf, name);
+  }
+
+  @RawEndpoint("GET", "/v1/kpi/daily/export", {
+    tag: "kpi",
+    summary: "Daily dashboard workbook (.xlsx) for a month: a tab per person plus Consolidated, in the TA team workbook layout",
+    query: z.object({ sheet: z.enum(["T1A", "T2"]).optional(), month: z.string().max(7).optional() }),
+  })
+  async kpiDailyExport({ actor, query, reply }: RawCtx<UserActor>) {
+    if (!canExportKpis(actor)) throw new ForbiddenError("Only team leaders, the TA coordinator, admin and the data analyst can export KPIs");
+    const { sheet, month } = parseDailyExport(query as { sheet?: string; month?: string });
+    const buf = await dailyWorkbook(sheet, month);
+    const name = `TA-team-${sheet === "T1A" ? "1" : "2"}-daily-dashboard-${monthLabel(month).replace(" ", "-")}.xlsx`;
+    await audit(actor, "EXPORT", "kpi_daily_workbook", `${sheet}:${month}`, { sheet, month, file: name });
     return sendXlsx(reply, buf, name);
   }
 
