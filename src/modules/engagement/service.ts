@@ -122,8 +122,21 @@ export async function queueColdReengagements(db: Tx = prisma) {
       AND ("reengageSentAt" IS NULL OR "reengageSentAt" < COALESCE("lastEngagedAt", 'epoch'::timestamp))
     ORDER BY "lastEngagedAt" DESC NULLS LAST
     LIMIT ${Math.max(0, s.reengageDailyLimit)}`;
-  for (const { id } of leads) await scheduleJob("reengage_whatsapp", t, { candidateId: id }, `reengage:${id}`, db);
-  return `${leads.length} re-engagement message(s) queued`;
+  // Don't re-queue a lead whose job is still in flight (PENDING/QUEUED/RUNNING) or already gave up
+  // (FAILED) — scheduleJob's upsert would otherwise reset its status and attempts to 0 every sweep,
+  // letting a permanently failing send (bad number, provider rejection) retry forever on our quota.
+  const live = leads.length
+    ? new Set(
+        (await db.scheduledJob.findMany({ where: { dedupeKey: { in: leads.map((l) => `reengage:${l.id}`) }, status: { not: "DONE" } }, select: { dedupeKey: true } })).map((j) => j.dedupeKey),
+      )
+    : new Set<string | null>();
+  let queued = 0;
+  for (const { id } of leads) {
+    if (live.has(`reengage:${id}`)) continue;
+    await scheduleJob("reengage_whatsapp", t, { candidateId: id }, `reengage:${id}`, db);
+    queued++;
+  }
+  return `${queued} re-engagement message(s) queued`;
 }
 
 /** Per-lead job: re-checks the lead is still cold and un-messaged, then sends. */

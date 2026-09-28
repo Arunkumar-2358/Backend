@@ -33,7 +33,8 @@ describe("Qualified → Team 3 leader → Team 2 allocation", () => {
     const c = await lead(id);
     expect(c.allocatedAt).toBeNull();
     expect(await visibleTo("sanjay", id)).toBe(true);
-    expect(await visibleTo("harsha", id)).toBe(true);
+    // A regular recruiter has no ownership or task on it yet — only the Team 3 leader can open it.
+    expect(await visibleTo("harsha", id)).toBe(false);
     // No Team 2 check-in until allocation; Active is gated on it.
     expect(await prisma.task.count({ where: { candidateId: id, type: "AVAILABILITY_CHECK", status: "OPEN" } })).toBe(0);
     await expect(recordAvailabilityCheck(await ownerActor(id), id, true, undefined)).rejects.toThrow(/Team 3 leader/);

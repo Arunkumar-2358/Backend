@@ -53,6 +53,11 @@ describe("HTTP: engagement", () => {
     expect((await call({ method: "GET", url: "/v1/engagement", as: "sanjay" })).json()).toMatchObject({ scope: "all", canAct: false });
     expect((await call({ method: "POST", url: `/v1/engagement/${id}/job-intent`, payload: {}, as: "sanjay" })).statusCode).toBe(403);
 
+    // Only the lead's Team 2 owner (or the Team 2 leader) can send the re-engagement WhatsApp.
+    expect((await call({ method: "POST", url: `/v1/engagement/${id}/reengage`, as: "sanjay" })).statusCode).toBe(403);
+    expect((await call({ method: "POST", url: `/v1/engagement/${id}/reengage`, as: "amos" })).statusCode).toBe(403);
+    expect(await prisma.message.count({ where: { candidateId: id, templateKey: "reengage_cold_whatsapp" } })).toBe(0);
+
     expect((await call({ method: "POST", url: `/v1/engagement/${id}/reengage`, as: "srividya" })).statusCode).toBe(200);
     expect(await prisma.message.count({ where: { candidateId: id, templateKey: "reengage_cold_whatsapp" } })).toBe(1);
     const res = await call({ method: "POST", url: `/v1/engagement/${id}/job-intent`, payload: { notes: "Needs a job in Chennai" }, as: "srividya" });

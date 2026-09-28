@@ -49,21 +49,26 @@ export async function allocateQualified(actor: Actor, input: AllocateInput, db: 
 
     const at = now();
     const settings = await getAllSettings(tx);
+    // Conditional claim: skip a lead a concurrent allocation already took (its allocatedAt is no longer null).
+    const claimed: typeof leads = [];
     for (const lead of leads) {
-      await tx.candidate.update({ where: { id: lead.id }, data: { ownerUserId: sourcer.id, allocatedAt: at, allocatedById: actorId(actor) } });
+      const { count } = await tx.candidate.updateMany({ where: { id: lead.id, ...PENDING_ALLOCATION }, data: { ownerUserId: sourcer.id, allocatedAt: at, allocatedById: actorId(actor) } });
+      if (!count) continue;
+      claimed.push(lead);
       // Team 2 starts here: the first availability check-in, then one every interval while Qualified.
       await ensureOpenTask(actor, { type: "AVAILABILITY_CHECK", title: "Availability check-in", candidateId: lead.id, assigneeId: sourcer.id, dueAt: at, notify: false }, tx);
       await scheduleJob("availability_check", new Date(at.getTime() + settings.availabilityCheckIntervalDays * DAY), { candidateId: lead.id }, `avail:${lead.id}`, tx);
       await audit(actor, "REASSIGN", "candidate", lead.id, { allocation: true, ownerFrom: lead.ownerUserId, ownerTo: sourcer.id }, tx);
     }
+    if (!claimed.length) throw new ValidationError("Those leads were just allocated by someone else — refresh and try again");
 
-    const cats = [...new Set(leads.map((l) => l.mainCategory ?? "uncategorised"))].map((c) => c.toLowerCase()).join(", ");
+    const cats = [...new Set(claimed.map((l) => l.mainCategory ?? "uncategorised"))].map((c) => c.toLowerCase()).join(", ");
     await notify(sourcer.id, {
       kind: "LEAD_ASSIGNED",
-      title: `${leads.length} qualified lead${leads.length === 1 ? "" : "s"} allocated to you`,
+      title: `${claimed.length} qualified lead${claimed.length === 1 ? "" : "s"} allocated to you`,
       body: `${cats} · by ${actorLabel(actor)} — availability check-ins are due`,
       link: "/availability",
     }, tx, actor);
-    return { count: leads.length, sourcer };
+    return { count: claimed.length, sourcer };
   });
 }

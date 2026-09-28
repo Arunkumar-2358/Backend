@@ -66,21 +66,29 @@ export async function allocateColdCalls(actor: Actor, input: AllocateColdCallsIn
     };
     const take = input.ids?.length ? undefined : Math.min(500, Math.max(1, Math.round(input.count ?? 500)));
     // Most recently engaged first: they are the likeliest to pick up.
-    const leads = await tx.candidate.findMany({ where, select: { id: true }, orderBy: [{ lastEngagedAt: { sort: "desc", nulls: "last" } }, { candidateCode: "asc" }], take });
+    const leads = await tx.candidate.findMany({ where, select: { id: true, lastEngagedAt: true }, orderBy: [{ lastEngagedAt: { sort: "desc", nulls: "last" } }, { candidateCode: "asc" }], take });
     if (!leads.length) throw new ValidationError("No cold leads are waiting for a call there");
 
     const at = now();
+    // Conditional claim: skip a lead a concurrent allocation already took for this cold spell.
+    let claimed = 0;
     for (const lead of leads) {
+      const { count } = await tx.candidate.updateMany({
+        where: { id: lead.id, OR: [{ coldCallAllocatedAt: null }, { coldCallAllocatedAt: { lt: lead.lastEngagedAt ?? new Date(0) } }] },
+        data: { coldCallAllocatedAt: at },
+      });
+      if (!count) continue;
+      claimed++;
       await createTask(actor, { type: "COLD_CALL", title: "Cold lead call: ask if they need a job", candidateId: lead.id, assigneeId: caller.id, dueAt: at, notify: false }, tx);
-      await tx.candidate.update({ where: { id: lead.id }, data: { coldCallAllocatedAt: at } });
     }
+    if (!claimed) throw new ValidationError("Those leads were just allocated by someone else — refresh and try again");
     await notify(caller.id, {
       kind: "TASK",
-      title: `${leads.length} cold lead${leads.length === 1 ? "" : "s"} to call`,
+      title: `${claimed} cold lead${claimed === 1 ? "" : "s"} to call`,
       body: `Allocated by ${actorLabel(actor)} — ask if they need a job`,
       link: "/cold-calls",
     }, tx, actor);
-    return { count: leads.length, caller };
+    return { count: claimed, caller };
   });
 }
 
